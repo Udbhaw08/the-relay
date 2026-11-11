@@ -18,7 +18,7 @@ The assistant strictly answers from these three arXiv papers (fetched at exact s
 
 ## 🚀 Architecture Overview
 
-![System Architecture](docs/architecture_diagram.svg)
+![System Architecture](docs/architecture_diagram.png)
 
 - **4-Step Decoupled Pipeline:**
   1. *Query Parser & Decomposer*

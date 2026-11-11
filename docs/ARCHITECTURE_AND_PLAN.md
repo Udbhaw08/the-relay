@@ -5,9 +5,7 @@
 
 ### System Architecture Overview
 
-![Architecture Diagram](architecture_diagram.svg)
-
-> 💡 **Visual Diagram View:** If your editor does not render Mermaid blocks natively, the vector diagram is rendered directly above. You can also double-click [`docs/architecture.html`](architecture.html) to view the interactive diagram in your browser.
+![Architecture Diagram](architecture_diagram.png)
 
 ```mermaid
 flowchart TD
