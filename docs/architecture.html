@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Relay - System Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body {
+      background-color: #121316;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      max-width: 1100px;
+      width: 100%;
+      background: #1a1b20;
+      border: 1px solid #2d3139;
+      border-radius: 12px;
+      padding: 32px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    }
+    h1 {
+      font-size: 26px;
+      margin-top: 0;
+      margin-bottom: 8px;
+      color: #f8fafc;
+      font-weight: 600;
+    }
+    p.subtitle {
+      color: #94a3b8;
+      font-size: 14px;
+      margin-top: 0;
+      margin-bottom: 24px;
+      border-bottom: 1px solid #2d3139;
+      padding-bottom: 16px;
+    }
+    .mermaid {
+      background: #141519;
+      border: 1px solid #262930;
+      border-radius: 8px;
+      padding: 24px;
+      display: flex;
+      justify-content: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Architecture Overview</h1>
+    <p class="subtitle">The Relay — Resilient Multi-Step Pipeline with Adaptive Retrieval & Stand-in Simulation</p>
+    
+    <div class="mermaid">
+flowchart TD
+    UserReq([Incoming Question]) --> IngressQueue[Priority Queue & Concurrency Gate]
+    
+    subgraph Pipeline["The Relay Pipeline (4 Steps + Tool Call + Loop)"]
+        IngressQueue --> Step1[Step 1: Query Parser & Intent Decomposer]
+        Step1 --> ToolCall[Tool Call: retrieve_passages]
+        ToolCall --> Step2[Step 2: Hybrid Paper Retrieval BM25 + Dense]
+        Step2 --> Step3[Step 3: Synthesis & Citation Drafter]
+        Step3 --> Step4[Step 4: Verification & Hallucination Guard]
+        Step4 -- Citation Missing / Hallucination Detected --> LoopBack[Loop: Broaden Query / Refine Retrieval]
+        LoopBack --> Step2
+        Step4 -- Citation Verified --> Reply[Final Verified Answer with Citations]
+        Step4 -- Unanswerable in Papers --> Refusal[Explicit Refusal: Papers do not say]
+    end
+
+    subgraph LLM_Layer["Model Provider Layer"]
+        Step1 & Step3 & Step4 --> Router{Source Selector}
+        Router -- Real Mode --> GroqClient[Groq / Gemini Cloud API Client]
+        Router -- Stand-in Mode --> StandInClient[Calibrated Stand-in Simulator]
+        GroqClient --> Telemetry[Rate Limit Header Parser & Latency Profiler]
+        StandInClient --> Telemetry
+    end
+
+    Telemetry --> CSVLogger[(results.csv Logger)]
+    CSVLogger --> TableGenerator[compute_tables.py -> Tables 1, 2a, 2b, 3]
+
+    style UserReq fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
+    style IngressQueue fill:#1e293b,stroke:#64748b,stroke-width:1px,color:#f8fafc
+    style Step1 fill:#0f172a,stroke:#3b82f6,stroke-width:2px,color:#f8fafc
+    style ToolCall fill:#0f172a,stroke:#8b5cf6,stroke-width:1px,color:#f8fafc
+    style Step2 fill:#0f172a,stroke:#3b82f6,stroke-width:1px,color:#f8fafc
+    style Step3 fill:#0f172a,stroke:#3b82f6,stroke-width:1px,color:#f8fafc
+    style Step4 fill:#0f172a,stroke:#3b82f6,stroke-width:2px,color:#f8fafc
+    style LoopBack fill:#312e81,stroke:#6366f1,stroke-width:1px,color:#e0e7ff
+    style Reply fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#ecfdf5
+    style Refusal fill:#7f1d1d,stroke:#ef4444,stroke-width:1px,color:#fee2e2
+    style Router fill:#1e293b,stroke:#f59e0b,stroke-width:2px,color:#f8fafc
+    style GroqClient fill:#0f172a,stroke:#06b6d4,stroke-width:1px,color:#f8fafc
+    style StandInClient fill:#0f172a,stroke:#ec4899,stroke-width:1px,color:#f8fafc
+    style Telemetry fill:#1e293b,stroke:#64748b,stroke-width:1px,color:#f8fafc
+    style CSVLogger fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
+    style TableGenerator fill:#1e293b,stroke:#10b981,stroke-width:1px,color:#f8fafc
+    </div>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#141519',
+        primaryColor: '#1e293b',
+        primaryTextColor: '#f8fafc',
+        primaryBorderColor: '#3b82f6',
+        lineColor: '#64748b',
+        secondaryColor: '#1e293b',
+        tertiaryColor: '#0f172a'
+      }
+    });
+  </script>
+</body>
+</html>

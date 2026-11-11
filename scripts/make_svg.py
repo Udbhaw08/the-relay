@@ -1,0 +1,187 @@
+"""Generate clean vector SVG diagram matching Image 2 exactly."""
+from pathlib import Path
+
+SVG_CONTENT = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1080" width="100%" height="100%" style="background:#131418; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <defs>
+    <!-- Arrow marker -->
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#64748b" />
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#10b981" />
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#ef4444" />
+    </marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#818cf8" />
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="40" y="45" fill="#f8fafc" font-size="22" font-weight="700">Architecture Overview</text>
+
+  <!-- Node: Incoming Question -->
+  <g transform="translate(680, 80)">
+    <rect x="-80" y="0" width="160" height="36" rx="18" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="0" y="22" fill="#f8fafc" font-size="12" font-weight="600" text-anchor="middle">Incoming Question</text>
+  </g>
+
+  <!-- Line: Incoming -> IngressQueue -->
+  <line x1="680" y1="116" x2="680" y2="148" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Node: Ingress Queue -->
+  <g transform="translate(680, 150)">
+    <rect x="-105" y="0" width="210" height="36" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1.5"/>
+    <text x="0" y="22" fill="#f8fafc" font-size="12" font-weight="500" text-anchor="middle">Priority Queue &amp; Concurrency Gate</text>
+  </g>
+
+  <!-- Line: IngressQueue -> Step 1 -->
+  <line x1="680" y1="186" x2="680" y2="338" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- SUBGRAPH 1: The Relay Pipeline -->
+  <rect x="40" y="230" width="820" height="340" rx="10" fill="#17181e" stroke="#334155" stroke-width="1.5"/>
+  <text x="60" y="255" fill="#94a3b8" font-size="12" font-weight="600">The Relay Pipeline (4 Steps + Tool Call + Loop)</text>
+
+  <!-- Step 1: Query Parser -->
+  <g transform="translate(680, 340)">
+    <rect x="-120" y="0" width="240" height="38" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="0" y="23" fill="#f8fafc" font-size="12" font-weight="600" text-anchor="middle">Step 1: Query Parser &amp; Intent Decomposer</text>
+  </g>
+
+  <!-- Line: Step 1 -> Tool Call -->
+  <line x1="720" y1="378" x2="720" y2="408" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Tool Call: retrieve_passages -->
+  <g transform="translate(720, 410)">
+    <rect x="-85" y="0" width="170" height="34" rx="6" fill="#0f172a" stroke="#8b5cf6" stroke-width="1.5"/>
+    <text x="0" y="21" fill="#e0e7ff" font-size="11" font-weight="500" text-anchor="middle">Tool Call: retrieve_passages</text>
+  </g>
+
+  <!-- Line: Tool Call -> Step 2 -->
+  <path d="M 635 427 L 340 427 L 340 458" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Step 2: Hybrid Paper Retrieval -->
+  <g transform="translate(230, 460)">
+    <rect x="-120" y="0" width="240" height="38" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="0" y="23" fill="#f8fafc" font-size="12" font-weight="600" text-anchor="middle">Step 2: Hybrid Paper Retrieval BM25 + Dense</text>
+  </g>
+
+  <!-- Line: Step 2 -> Step 3 -->
+  <path d="M 230 498 L 230 528 L 200 528" fill="none" stroke="#64748b" stroke-width="1.5"/>
+  <line x1="200" y1="528" x2="190" y2="528" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Step 3: Synthesis & Citation Drafter -->
+  <g transform="translate(180, 510)">
+    <rect x="-95" y="0" width="190" height="38" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="0" y="23" fill="#f8fafc" font-size="12" font-weight="600" text-anchor="middle">Step 3: Synthesis &amp; Citation Drafter</text>
+  </g>
+
+  <!-- Line: Step 3 -> Step 4 -->
+  <path d="M 85 529 L 55 529 L 55 300 L 170 300" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Step 4: Verification & Hallucination Guard -->
+  <g transform="translate(180, 280)">
+    <rect x="-105" y="0" width="210" height="38" rx="6" fill="#0f172a" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="0" y="23" fill="#f8fafc" font-size="12" font-weight="600" text-anchor="middle">Step 4: Verification &amp; Hallucination Guard</text>
+  </g>
+
+  <!-- Decision Branches from Step 4 -->
+  <!-- 1. Citation Missing -> LoopBack -->
+  <line x1="100" y1="318" x2="100" y2="348" stroke="#818cf8" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+  <rect x="75" y="325" width="170" height="18" rx="3" fill="#1e1b4b"/>
+  <text x="160" y="338" fill="#c7d2fe" font-size="9" text-anchor="middle">Citation Missing / Hallucination Detected</text>
+
+  <!-- Node: Loop -->
+  <g transform="translate(190, 390)">
+    <rect x="-110" y="-18" width="220" height="36" rx="6" fill="#1e1b4b" stroke="#6366f1" stroke-width="1.5"/>
+    <text x="0" y="4" fill="#e0e7ff" font-size="11" font-weight="500" text-anchor="middle">Loop: Broaden Query / Refine Retrieval</text>
+  </g>
+  <!-- Loop connection to Step 2 -->
+  <line x1="190" y1="408" x2="230" y2="458" stroke="#818cf8" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- 2. Citation Verified -> Reply -->
+  <path d="M 230 318 L 230 365 L 420 365 L 420 380" fill="none" stroke="#10b981" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+  <rect x="360" y="340" width="85" height="18" rx="3" fill="#064e3b"/>
+  <text x="402" y="353" fill="#a7f3d0" font-size="9" text-anchor="middle">Citation Verified</text>
+
+  <g transform="translate(420, 390)">
+    <rect x="-95" y="-18" width="190" height="36" rx="6" fill="#064e3b" stroke="#10b981" stroke-width="1.5"/>
+    <text x="0" y="4" fill="#ecfdf5" font-size="11" font-weight="600" text-anchor="middle">Final Verified Answer with Citations</text>
+  </g>
+
+  <!-- 3. Unanswerable in Papers -> Refusal -->
+  <path d="M 270 318 L 270 345 L 610 345 L 610 380" fill="none" stroke="#ef4444" stroke-width="1.5" marker-end="url(#arrow-red)"/>
+  <rect x="555" y="340" width="110" height="18" rx="3" fill="#450a0a"/>
+  <text x="610" y="353" fill="#fca5a5" font-size="9" text-anchor="middle">Unanswerable in Papers</text>
+
+  <g transform="translate(610, 390)">
+    <rect x="-90" y="-18" width="180" height="36" rx="6" fill="#450a0a" stroke="#ef4444" stroke-width="1.5"/>
+    <text x="0" y="4" fill="#fee2e2" font-size="11" font-weight="600" text-anchor="middle">Explicit Refusal: Papers do not say</text>
+  </g>
+
+  <!-- Connection from Step 1, 3, 4 to Model Provider Layer -->
+  <path d="M 180 548 L 180 630 L 460 630 L 460 655" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- SUBGRAPH 2: Model Provider Layer -->
+  <rect x="260" y="615" width="400" height="280" rx="10" fill="#17181e" stroke="#334155" stroke-width="1.5"/>
+  <text x="280" y="640" fill="#94a3b8" font-size="12" font-weight="600">Model Provider Layer</text>
+
+  <!-- Diamond: Source Selector -->
+  <g transform="translate(460, 680)">
+    <polygon points="0,-24 55,0 0,24 -55,0" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="0" y="4" fill="#f8fafc" font-size="10" font-weight="600" text-anchor="middle">Source Selector</text>
+  </g>
+
+  <!-- Left: Real Mode -> Groq / Gemini Client -->
+  <path d="M 405 680 L 340 680 L 340 735" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="305" y="695" width="60" height="16" rx="3" fill="#1e293b"/>
+  <text x="335" y="707" fill="#cbd5e1" font-size="9" text-anchor="middle">Real Mode</text>
+
+  <g transform="translate(340, 755)">
+    <rect x="-65" y="-16" width="130" height="32" rx="6" fill="#0f172a" stroke="#06b6d4" stroke-width="1.5"/>
+    <text x="0" y="4" fill="#e0f2fe" font-size="10" font-weight="500" text-anchor="middle">Groq / Gemini API Client</text>
+  </g>
+
+  <!-- Right: Stand-in Mode -> Calibrated Stand-in -->
+  <path d="M 515 680 L 580 680 L 580 735" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="545" y="695" width="70" height="16" rx="3" fill="#1e293b"/>
+  <text x="580" y="707" fill="#cbd5e1" font-size="9" text-anchor="middle">Stand-in Mode</text>
+
+  <g transform="translate(580, 755)">
+    <rect x="-75" y="-16" width="150" height="32" rx="6" fill="#0f172a" stroke="#ec4899" stroke-width="1.5"/>
+    <text x="0" y="4" fill="#fce7f3" font-size="10" font-weight="500" text-anchor="middle">Calibrated Stand-in Simulator</text>
+  </g>
+
+  <!-- Convergence to Telemetry -->
+  <path d="M 340 771 L 340 815 L 450 815" fill="none" stroke="#64748b" stroke-width="1.5"/>
+  <path d="M 580 771 L 580 815 L 470 815" fill="none" stroke="#64748b" stroke-width="1.5"/>
+  <line x1="460" y1="815" x2="460" y2="832" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Rate Limit Header Parser -->
+  <g transform="translate(460, 850)">
+    <rect x="-105" y="-16" width="210" height="32" rx="6" fill="#1e293b" stroke="#64748b" stroke-width="1.5"/>
+    <text x="0" y="4" fill="#f8fafc" font-size="10" font-weight="500" text-anchor="middle">Rate Limit Header Parser &amp; Latency Profiler</text>
+  </g>
+
+  <!-- Line: Telemetry -> results.csv -->
+  <line x1="460" y1="866" x2="460" y2="925" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Node: results.csv Logger -->
+  <g transform="translate(460, 945)">
+    <rect x="-80" y="-18" width="160" height="36" rx="18" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
+    <text x="0" y="4" fill="#38bdf8" font-size="12" font-weight="700" text-anchor="middle">results.csv Logger</text>
+  </g>
+
+  <!-- Line: results.csv -> Table Generator -->
+  <line x1="460" y1="963" x2="460" y2="1005" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Node: compute_tables.py -->
+  <g transform="translate(460, 1025)">
+    <rect x="-110" y="-18" width="220" height="36" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+    <text x="0" y="4" fill="#ecfdf5" font-size="11" font-weight="600" text-anchor="middle">compute_tables.py -&gt; Tables 1, 2a, 2b, 3</text>
+  </g>
+</svg>'''
+
+Path("docs/architecture_diagram.svg").write_text(SVG_CONTENT, encoding="utf-8")
+print("Saved docs/architecture_diagram.svg")
