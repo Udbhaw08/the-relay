@@ -52,6 +52,8 @@ class StandInModelClient(BaseModelClient):
         self._request_timestamps = deque()
         self._daily_request_count = 0
         self._daily_budget_exhausted = False
+        self._tpm_exhausted = False
+        self._injected_fault: Optional[str] = None
 
     def set_seed(self, seed: Optional[int]):
         """Set random seed for deterministic simulation."""
@@ -64,11 +66,36 @@ class StandInModelClient(BaseModelClient):
             self._request_timestamps.clear()
             self._daily_request_count = 0
             self._daily_budget_exhausted = False
+            self._tpm_exhausted = False
+            self._injected_fault = None
             self._in_flight = 0
             self._max_concurrency = 0
             self._queue_depth = 0
             self._peak_queue_depth = 0
             self._peak_queue_length = 0
+
+    def inject_fault(self, fault_type: str):
+        """Deterministically inject simulated failure: '429', 'timeout', 'network_failure', '500'."""
+        with self._lock:
+            self._injected_fault = fault_type.lower()
+
+    def clear_injected_faults(self):
+        """Clear any injected faults or exhaustion overrides."""
+        with self._lock:
+            self._injected_fault = None
+            self._tpm_exhausted = False
+            self._daily_budget_exhausted = False
+
+    def exhaust_rpm(self):
+        """Force stand-in into RPM limit exceeded state."""
+        with self._lock:
+            now = time.time()
+            self._request_timestamps = deque([now] * self.rpm_limit)
+
+    def exhaust_tpm(self):
+        """Force stand-in into TPM limit exceeded state."""
+        with self._lock:
+            self._tpm_exhausted = True
 
     def queue_enter(self) -> int:
         """Record entry of a request into the waiting queue."""
@@ -105,13 +132,38 @@ class StandInModelClient(BaseModelClient):
             self.rpm_limit = max(1, self.rpm_limit // 2)
 
     def _check_rate_limits(self, now: float) -> Optional[tuple[str, dict[str, str]]]:
-        """Check if RPM or RPD limits have been breached. Returns (error_type, headers)."""
+        """Check if RPM, TPM, RPD, or injected faults are triggered. Returns (error_type, headers)."""
         with self._lock:
+            if self._injected_fault:
+                if self._injected_fault in ("429", "rate_limited"):
+                    return "rate_limited", {
+                        "error": "Simulated rate limit exceeded (HTTP 429)",
+                        "retry-after": "5",
+                        "x-ratelimit-remaining-requests": "0"
+                    }
+                elif self._injected_fault == "timeout":
+                    return "timeout", {
+                        "error": "Simulated gateway timeout",
+                        "status_code": "504"
+                    }
+                elif self._injected_fault in ("500", "server_error", "network_failure"):
+                    return "error", {
+                        "error": "Simulated 500 internal server error",
+                        "status_code": "500"
+                    }
+
             if self._daily_budget_exhausted or self._daily_request_count >= self.rpd_limit:
                 return "rate_limited", {
                     "error": "Daily budget exhausted",
                     "retry-after": "43200",  # 12 hours until reset
                     "x-ratelimit-remaining-requests": "0"
+                }
+
+            if self._tpm_exhausted:
+                return "rate_limited", {
+                    "error": "Token limit exceeded (TPM)",
+                    "retry-after": "20",
+                    "x-ratelimit-remaining-tokens": "0"
                 }
 
             # Clean timestamps older than 60 seconds
@@ -174,6 +226,48 @@ class StandInModelClient(BaseModelClient):
                 model_name="stand-in-calibrated-v1",
                 status="rate_limited",
                 error_message=headers.get("error", "Rate limit reached"),
+                rate_limit_headers=headers
+            )
+        elif limit_error == "timeout":
+            total_ms = (time.perf_counter() - start_perf) * 1000.0
+            return ModelResponse(
+                text="",
+                first_token_ms=None,
+                total_ms=round(total_ms, 1),
+                tokens_in=tokens_in,
+                tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=tokens_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=tokens_in,
+                is_simulated=True,
+                provider="stand_in",
+                model_name="stand-in-calibrated-v1",
+                status="timeout",
+                error_message=headers.get("error", "Gateway timeout"),
+                rate_limit_headers=headers
+            )
+        elif limit_error == "error":
+            total_ms = (time.perf_counter() - start_perf) * 1000.0
+            return ModelResponse(
+                text="",
+                first_token_ms=None,
+                total_ms=round(total_ms, 1),
+                tokens_in=tokens_in,
+                tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=tokens_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=tokens_in,
+                is_simulated=True,
+                provider="stand_in",
+                model_name="stand-in-calibrated-v1",
+                status="error",
+                error_message=headers.get("error", "Internal server error"),
                 rate_limit_headers=headers
             )
 
@@ -296,6 +390,48 @@ class StandInModelClient(BaseModelClient):
                 model_name="stand-in-calibrated-v1",
                 status="rate_limited",
                 error_message=headers.get("error", "Rate limit reached"),
+                rate_limit_headers=headers
+            )
+        elif limit_error == "timeout":
+            total_ms = (time.perf_counter() - start_perf) * 1000.0
+            return ModelResponse(
+                text="",
+                first_token_ms=None,
+                total_ms=round(total_ms, 1),
+                tokens_in=tokens_in,
+                tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=tokens_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=tokens_in,
+                is_simulated=True,
+                provider="stand_in",
+                model_name="stand-in-calibrated-v1",
+                status="timeout",
+                error_message=headers.get("error", "Gateway timeout"),
+                rate_limit_headers=headers
+            )
+        elif limit_error == "error":
+            total_ms = (time.perf_counter() - start_perf) * 1000.0
+            return ModelResponse(
+                text="",
+                first_token_ms=None,
+                total_ms=round(total_ms, 1),
+                tokens_in=tokens_in,
+                tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=tokens_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=tokens_in,
+                is_simulated=True,
+                provider="stand_in",
+                model_name="stand-in-calibrated-v1",
+                status="error",
+                error_message=headers.get("error", "Internal server error"),
                 rate_limit_headers=headers
             )
 

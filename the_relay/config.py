@@ -75,6 +75,16 @@ DEFAULT_SETTING = os.getenv("DEFAULT_RETRIEVAL_SETTING", "setting_b")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "15.0"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
 BASE_BACKOFF_SECONDS = float(os.getenv("BASE_BACKOFF_SECONDS", "2.0"))
+MAX_BACKOFF_SECONDS = float(os.getenv("MAX_BACKOFF_SECONDS", "30.0"))
+MAX_RETRY_AFTER_CAP = float(os.getenv("MAX_RETRY_AFTER_CAP", "60.0"))
+
+# Configurable local safety caps (do not assume public base limits match unverified friend account)
+LOCAL_RPM_LIMIT = int(os.getenv("LOCAL_RPM_LIMIT", "30"))
+LOCAL_TPM_LIMIT = int(os.getenv("LOCAL_TPM_LIMIT", "30000"))
+LOCAL_RPD_LIMIT = int(os.getenv("LOCAL_RPD_LIMIT", "14400"))
+LOCAL_TPD_LIMIT = int(os.getenv("LOCAL_TPD_LIMIT", "500000"))
+MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "5"))
+MAX_QUEUE_CAPACITY = int(os.getenv("MAX_QUEUE_CAPACITY", "50"))
 
 def validate_groq_config():
     """Startup validation: verify that GROQ_API_KEY is present and GROQ_MODEL is valid when in Groq mode."""

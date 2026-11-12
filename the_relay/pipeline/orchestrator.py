@@ -4,14 +4,20 @@ Implements the 4 mandatory steps, tool calling, loop-back/branching, and telemet
 """
 import time
 import re
-from typing import Optional, Any
+import random
+from typing import Optional, Any, Callable
 from pydantic import BaseModel, Field
 from the_relay.config import DEFAULT_SETTING, MAX_RETRIES
 from the_relay.retrieval.engine import RetrievalEngine
 from the_relay.retrieval.chunker import Chunk
 from the_relay.models.router import ModelRouter
 from the_relay.models.base import ModelResponse
-from the_relay.pipeline.resilience import compute_backoff, format_daily_exhaustion_message, is_retryable_error
+from the_relay.pipeline.resilience import (
+    compute_backoff,
+    format_daily_exhaustion_message,
+    is_retryable_error,
+    parse_retry_after
+)
 from the_relay.eval.grader import CitationVerifier, FactualGrader, is_explicit_refusal
 
 class PipelineResult(BaseModel):
@@ -181,9 +187,12 @@ class RelayPipeline:
         ground_truth_key_facts: Optional[list[str]] = None,
         queue_wait_ms: Optional[float] = None,
         queue_depth: Optional[int] = None,
-        concurrency: Optional[int] = None
+        concurrency: Optional[int] = None,
+        sleeper: Optional[Callable[[float], None]] = None,
+        rng: Optional[random.Random] = None
     ) -> PipelineResult:
         """Execute full pipeline for an incoming user question with monotonic component telemetry."""
+        sleep_fn = sleeper or time.sleep
         t_req_start_perf = time.perf_counter()
         t_proc_start_perf = t_req_start_perf
         start_time = time.time()
@@ -237,9 +246,10 @@ class RelayPipeline:
                     limit_warning = True  # Throttle down retrieval on retry
                     backoff = compute_backoff(
                         attempt,
-                        retry_after_header=resp.rate_limit_headers.get("retry-after")
+                        retry_after_header=resp.rate_limit_headers.get("retry-after"),
+                        rng=rng
                     )
-                    time.sleep(backoff)
+                    sleep_fn(backoff)
                     continue
                 else:
                     # Non-retryable or budget exhausted
@@ -247,8 +257,9 @@ class RelayPipeline:
                     total_wall_ms = max(0.1, round((t_req_end - t_req_start_perf) * 1000.0, 1))
                     timestamps["completion_perf"] = t_req_end
 
+                    reset_sec = parse_retry_after(resp.rate_limit_headers.get("retry-after"))
                     final_text = (
-                        format_daily_exhaustion_message()
+                        format_daily_exhaustion_message(reset_seconds=reset_sec)
                         if "daily budget" in (resp.error_message or "").lower()
                         else f"Service unavailable: {resp.error_message}"
                     )

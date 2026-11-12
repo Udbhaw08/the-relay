@@ -41,9 +41,17 @@ def extract_rate_limit_headers(headers: Any) -> dict[str, str]:
         "x-ratelimit-reset-tokens",
         "x-request-id"
     ]
+    header_map = {}
+    if hasattr(headers, "items"):
+        for k, v in headers.items():
+            header_map[str(k).lower()] = str(v)
+    elif isinstance(headers, dict):
+        for k, v in headers.items():
+            header_map[str(k).lower()] = str(v)
+
     extracted = {}
     for k in relevant_keys:
-        val = headers.get(k)
+        val = header_map.get(k)
         if val is not None:
             extracted[k] = str(val)
     return extracted
