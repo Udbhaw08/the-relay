@@ -3,7 +3,9 @@ Aggregator script to compute Tables 1, 2a, 2b, and 3 directly from results.csv.
 Ensures 100% mathematical consistency with raw experimental data.
 """
 import sys
+import argparse
 from pathlib import Path
+from typing import Optional
 import pandas as pd
 import numpy as np
 
@@ -12,16 +14,30 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
 from the_relay.config import RESULTS_PATH
+from the_relay.traffic.schema import validate_results_dataframe
 
-def compute_percentiles(series: pd.Series) -> tuple[float, float, float]:
-    """Compute p50, p95, p99 for a numeric series."""
-    clean = series.dropna()
+def compute_percentiles(series: pd.Series) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """Compute p50, p95, p99 for a numeric series. Returns None if no valid positive values exist."""
+    clean = pd.to_numeric(series, errors="coerce").dropna()
+    clean = clean[clean > 0]
     if len(clean) == 0:
-        return 0.0, 0.0, 0.0
+        return None, None, None
     p50 = float(np.percentile(clean, 50))
     p95 = float(np.percentile(clean, 95))
     p99 = float(np.percentile(clean, 99))
     return round(p50, 1), round(p95, 1), round(p99, 1)
+
+def format_latencies_3(p50: Optional[float], p95: Optional[float], p99: Optional[float]) -> str:
+    """Format 3-percentile string or N/A if missing."""
+    if p50 is None:
+        return "N/A"
+    return f"{p50:.1f} / {p95:.1f} / {p99:.1f} ms"
+
+def format_latencies_2(p50: Optional[float], p95: Optional[float]) -> str:
+    """Format 2-percentile string or N/A if missing."""
+    if p50 is None:
+        return "N/A"
+    return f"{p50:.1f} / {p95:.1f} ms"
 
 def generate_table_1() -> str:
     """Generate Table 1: Limits found in real service (GroqCloud Free Tier)."""
@@ -44,7 +60,7 @@ def generate_table_1() -> str:
         md.append(f"| {limit} | {val} | {how} | {conf} |")
     return "\n".join(md)
 
-def generate_table_2a_and_2b(df: pd.DataFrame) -> tuple[str, str]:
+def generate_table_2a_and_2b(df: pd.DataFrame, run_id: Optional[str] = None) -> tuple[str, str]:
     """Generate Tables 2a and 2b for load scenarios."""
     scenarios = [
         "steady",
@@ -66,8 +82,12 @@ def generate_table_2a_and_2b(df: pd.DataFrame) -> tuple[str, str]:
         "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
     ]
 
+    active_df = df.copy()
+    if run_id and "run_id" in active_df.columns:
+        active_df = active_df[active_df["run_id"] == run_id]
+
     for sc in scenarios:
-        sub = df[df["scenario"] == sc]
+        sub = active_df[active_df["scenario"] == sc]
         if len(sub) == 0:
             continue
 
@@ -80,28 +100,31 @@ def generate_table_2a_and_2b(df: pd.DataFrame) -> tuple[str, str]:
         duration_s = max(1.0, round(max_start - min_start + (sub["total_ms"].max() / 1000.0), 1))
         offered_rate = round((reqs_sent / duration_s) * 60.0, 1)
 
-        # Latencies
-        ttft_p50, ttft_p95, ttft_p99 = compute_percentiles(sub["first_token_ms"])
+        # TTFT: only measured on requests with successful output tokens
+        ok_subset = sub[sub["status"] == "ok"]
+        ttft_p50, ttft_p95, ttft_p99 = compute_percentiles(ok_subset["first_token_ms"])
         tot_p50, tot_p95, tot_p99 = compute_percentiles(sub["total_ms"])
+
+        ttft_str = format_latencies_3(ttft_p50, ttft_p95, ttft_p99)
+        tot_str = format_latencies_3(tot_p50, tot_p95, tot_p99)
 
         t2a_lines.append(
             f"| {sc} | {source} | {reqs_sent} | {duration_s}s | {offered_rate} | "
-            f"{ttft_p50} / {ttft_p95} / {ttft_p99} ms | {tot_p50} / {tot_p95} / {tot_p99} ms |"
+            f"{ttft_str} | {tot_str} |"
         )
 
         # Outcomes
-        succeeded_pct = round((len(sub[sub["status"] == "ok"]) / reqs_sent) * 100.0, 1)
+        succeeded_pct = round((len(ok_subset) / reqs_sent) * 100.0, 1)
         rate_limited_pct = round((len(sub[sub["status"] == "rate_limited"]) / reqs_sent) * 100.0, 1)
         timed_out_pct = round((len(sub[sub["status"].isin(["timeout", "error"])]) / reqs_sent) * 100.0, 1)
         
         avg_retries = round(float(sub["retries"].mean()), 2)
-        # Peak queue heuristic based on concurrency
+        # Peak queue heuristic based on concurrency (documented as concurrency-derived heuristic)
         peak_queue = max(1, int(reqs_sent // 3)) if sc in ("burst", "sustained_overload") else 1
         
-        ok_subset = sub[sub["status"] == "ok"]
         avg_tokens_out = round(float(ok_subset["tokens_out"].mean()), 1) if len(ok_subset) > 0 else 0.0
         
-        # Free tier cost calculation: $0.00 for free tier
+        # Free tier cost calculation: $0.00 for verified free tier
         cost_per_1k = "$0.00 (Free Tier)"
 
         t2b_lines.append(
@@ -111,8 +134,12 @@ def generate_table_2a_and_2b(df: pd.DataFrame) -> tuple[str, str]:
 
     return "\n".join(t2a_lines), "\n".join(t2b_lines)
 
-def generate_table_3(df: pd.DataFrame) -> str:
-    """Generate Table 3: Retrieval settings benchmark."""
+def generate_table_3(df: pd.DataFrame, run_id: Optional[str] = None) -> str:
+    """
+    Generate Table 3: Retrieval settings benchmark.
+    Strictly groups evaluation rows by scenario (eval_setting_a, eval_setting_b, eval_setting_c)
+    and optional run_id, completely avoiding cross-scenario contamination from load tests.
+    """
     settings = [
         ("setting_a", "Piece size 250, 3 fetched, re-rank: no"),
         ("setting_b", "Piece size 500, 5 fetched, re-rank: yes"),
@@ -125,41 +152,76 @@ def generate_table_3(df: pd.DataFrame) -> str:
         "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
     ]
 
+    active_df = df.copy()
+    if run_id and "run_id" in active_df.columns:
+        active_df = active_df[active_df["run_id"] == run_id]
+
     for s_key, label in settings:
-        sub = df[(df["retrieval_setting"] == s_key) | (df["scenario"] == f"eval_{s_key}")]
-        if len(sub) == 0:
+        # STRICT SCENARIO-ONLY FILTERING - NO CROSS-CONTAMINATION WITH LOAD TEST ROWS
+        sub = active_df[active_df["scenario"] == f"eval_{s_key}"]
+        q_count = len(sub)
+
+        if q_count == 0:
+            t3_lines.append(
+                f"| {label} | 0 | N/A | N/A | N/A | N/A | N/A | N/A |"
+            )
             continue
 
-        q_count = len(sub)
-        correct_cited_pct = round((len(sub[sub["answer_grade"] == "correct"]) / q_count) * 100.0, 1)
-        wrong_pct = round((len(sub[sub["answer_grade"] == "wrong"]) / q_count) * 100.0, 1)
-        refused_pct = round((len(sub[sub["answer_grade"] == "refused_correctly"]) / q_count) * 100.0, 1)
-
         ok_sub = sub[sub["status"] == "ok"]
-        avg_tokens = round(float(ok_sub["tokens_out"].mean()), 1) if len(ok_sub) > 0 else 0.0
+        correct_cited_pct = round((len(ok_sub[ok_sub["answer_grade"] == "correct"]) / q_count) * 100.0, 1)
+        wrong_pct = round((len(ok_sub[ok_sub["answer_grade"].isin(["wrong", "refused_wrongly"])]) / q_count) * 100.0, 1)
+        refused_pct = round((len(ok_sub[ok_sub["answer_grade"] == "refused_correctly"]) / q_count) * 100.0, 1)
+
+        # Tokens per answer (output tokens on successful answers)
+        if len(ok_sub) > 0:
+            avg_tokens = round(float(ok_sub["tokens_out"].mean()), 1)
+        else:
+            avg_tokens = "N/A"
         
-        ttft_p50, ttft_p95, _ = compute_percentiles(sub["first_token_ms"])
+        # TTFT: only measured on requests with valid output tokens
+        valid_ttft = ok_sub[pd.to_numeric(ok_sub["first_token_ms"], errors="coerce") > 0]
+        ttft_p50, ttft_p95, _ = compute_percentiles(valid_ttft["first_token_ms"])
         tot_p50, tot_p95, _ = compute_percentiles(sub["total_ms"])
+
+        ttft_str = format_latencies_2(ttft_p50, ttft_p95)
+        tot_str = format_latencies_2(tot_p50, tot_p95)
 
         t3_lines.append(
             f"| {label} | {q_count} | {correct_cited_pct}% | {wrong_pct}% | {refused_pct}% | "
-            f"{avg_tokens} | {ttft_p50} / {ttft_p95} ms | {tot_p50} / {tot_p95} ms |"
+            f"{avg_tokens} | {ttft_str} | {tot_str} |"
         )
 
     return "\n".join(t3_lines)
 
 def main():
-    csv_file = RESULTS_PATH
+    parser = argparse.ArgumentParser(description="Aggregate and generate experimental benchmark tables.")
+    parser.add_argument("--csv", type=str, default=str(RESULTS_PATH), help="Path to results CSV file.")
+    parser.add_argument("--run-id", type=str, default=None, help="Filter records by run ID.")
+    parser.add_argument("--validate", action="store_true", help="Validate CSV schema before aggregating.")
+    args = parser.parse_args()
+
+    csv_file = Path(args.csv)
     if not csv_file.exists():
         print(f"Error: {csv_file} does not exist. Run benchmark scenarios first.")
         sys.exit(1)
 
     df = pd.read_csv(csv_file)
-    print(f"[Aggregator] Loaded {len(df)} request records from {csv_file.name}\n")
+    print(f"[Aggregator] Loaded {len(df)} request records from {csv_file.name}")
+    if args.run_id:
+        print(f"[Aggregator] Filtering for run_id='{args.run_id}'")
+
+    if args.validate:
+        report = validate_results_dataframe(df, expected_run_id=args.run_id)
+        if not report.is_valid:
+            print(f"[Validation Warning/Error]: Schema check failed with {len(report.errors)} errors:")
+            for err in report.errors:
+                print(f"  - {err}")
+        else:
+            print("[Aggregator] CSV schema validation PASSED.")
 
     t1 = generate_table_1()
-    t2a, t2b = generate_table_2a_and_2b(df)
-    t3 = generate_table_3(df)
+    t2a, t2b = generate_table_2a_and_2b(df, run_id=args.run_id)
+    t3 = generate_table_3(df, run_id=args.run_id)
 
     print("=" * 80)
     print(t1)
@@ -173,4 +235,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

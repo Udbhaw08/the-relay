@@ -18,18 +18,20 @@ class PipelineResult(BaseModel):
     scenario: str = "default"
     source: str  # real or stand-in
     start_time: float
-    first_token_ms: float
+    first_token_ms: Optional[float] = None
     total_ms: float
     status: str  # ok, rate_limited, timeout, error
     retries: int
     tokens_in: int
     tokens_out: int
     retrieval_setting: str
-    answer_grade: str  # correct, wrong, refused_correctly, refused_wrongly
+    requested_retrieval_setting: Optional[str] = None
+    answer_grade: str  # correct, wrong, refused_correctly, refused_wrongly, error, rate_limited
     answer: str
     citations_found: list[str] = []
     steps_executed: list[str] = []
     loop_triggered: bool = False
+    run_id: str = "default_run"
 
 class RelayPipeline:
     def __init__(self, retrieval_engine: Optional[RetrievalEngine] = None, router: Optional[ModelRouter] = None):
@@ -146,7 +148,8 @@ class RelayPipeline:
         scenario: str = "steady",
         source: str = "real",
         retrieval_setting: str = DEFAULT_SETTING,
-        expected_negative: bool = False
+        expected_negative: bool = False,
+        run_id: str = "default_run"
     ) -> PipelineResult:
         """Execute full pipeline for an incoming user question."""
         start_time = time.time()
@@ -190,23 +193,25 @@ class RelayPipeline:
                         if "daily budget" in (resp.error_message or "").lower()
                         else f"Service unavailable: {resp.error_message}"
                     )
-                    grade = "refused_correctly" if expected_negative else "wrong"
+                    grade = "refused_correctly" if expected_negative else "error"
                     return PipelineResult(
                         request_id=request_id,
                         scenario=scenario,
                         source=source,
                         start_time=start_time,
-                        first_token_ms=resp.first_token_ms,
+                        first_token_ms=None,
                         total_ms=resp.total_ms,
                         status=resp.status,
                         retries=retries_used,
                         tokens_in=resp.tokens_in,
                         tokens_out=resp.tokens_out,
                         retrieval_setting=effective_setting,
+                        requested_retrieval_setting=retrieval_setting,
                         answer_grade=grade,
                         answer=final_text,
                         steps_executed=steps_executed,
-                        loop_triggered=loop_triggered
+                        loop_triggered=loop_triggered,
+                        run_id=run_id
                     )
 
             # Step 4: Verification & Hallucination Guard
@@ -232,18 +237,20 @@ class RelayPipeline:
                 scenario=scenario,
                 source=source,
                 start_time=start_time,
-                first_token_ms=resp.first_token_ms,
+                first_token_ms=resp.first_token_ms if resp.tokens_out > 0 else None,
                 total_ms=resp.total_ms,
                 status="ok",
                 retries=retries_used,
                 tokens_in=resp.tokens_in,
                 tokens_out=resp.tokens_out,
                 retrieval_setting=effective_setting,
+                requested_retrieval_setting=retrieval_setting,
                 answer_grade=grade,
                 answer=draft_text,
                 citations_found=citations,
                 steps_executed=steps_executed,
-                loop_triggered=loop_triggered
+                loop_triggered=loop_triggered,
+                run_id=run_id
             )
 
         # Fallback if retry loop finishes without success
@@ -252,15 +259,17 @@ class RelayPipeline:
             scenario=scenario,
             source=source,
             start_time=start_time,
-            first_token_ms=0.0,
+            first_token_ms=None,
             total_ms=0.0,
             status="error",
             retries=retries_used,
             tokens_in=0,
             tokens_out=0,
             retrieval_setting=retrieval_setting,
-            answer_grade="wrong",
+            requested_retrieval_setting=retrieval_setting,
+            answer_grade="error",
             answer="Pipeline failed after retries.",
-            steps_executed=steps_executed
+            steps_executed=steps_executed,
+            run_id=run_id
         )
 
