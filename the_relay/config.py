@@ -50,19 +50,22 @@ RETRIEVAL_SETTINGS = {
         "piece_size": 250,       # tokens (~1000 characters)
         "pieces_fetched": 3,
         "rerank": False,
-        "description": "Small chunks, top-3, no re-ranking (fast, low cost)"
+        "mode": "bm25_only",     # Fast BM25-only retrieval
+        "description": "Small chunks, top-3, BM25-only, no re-ranking (fast, low cost)"
     },
     "setting_b": {
         "piece_size": 500,       # tokens (~2000 characters)
         "pieces_fetched": 5,
         "rerank": True,
-        "description": "Medium chunks, top-5, hybrid re-ranking (balanced quality)"
+        "mode": "hybrid",        # True hybrid: BM25 + Dense Embeddings + RRF
+        "description": "Medium chunks, top-5, true hybrid (BM25 + Dense + RRF)"
     },
     "setting_c": {
         "piece_size": 1000,      # tokens (~4000 characters)
         "pieces_fetched": 7,
         "rerank": True,
-        "description": "Large chunks, top-7, deep re-ranking (high recall, high tokens)"
+        "mode": "hybrid",        # Deep hybrid: BM25 + Dense Embeddings + RRF
+        "description": "Large chunks, top-7, deep hybrid (BM25 + Dense + RRF)"
     }
 }
 
