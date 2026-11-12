@@ -4,21 +4,27 @@ from the_relay.models.base import BaseModelClient
 from the_relay.models.groq_client import GroqClient
 from the_relay.models.stand_in import StandInModelClient
 from the_relay.config import LLM_PROVIDER
+from the_relay.pipeline.resilience import LocalQuotaLimiter
 
 class ModelRouter:
     """
     Router directing traffic to either the Groq client (the only real provider)
     or the stand-in simulator (only for explicitly selected offline tests).
     """
-    def __init__(self, provider: Optional[str] = None):
+    def __init__(
+        self,
+        provider: Optional[str] = None,
+        limiter: Optional[LocalQuotaLimiter] = None
+    ):
         self.provider = (provider or LLM_PROVIDER).lower()
+        self.limiter = limiter if limiter is not None else LocalQuotaLimiter()
         self._groq_client: Optional[GroqClient] = None
         self._stand_in_client: Optional[StandInModelClient] = None
 
     @property
     def groq_client(self) -> GroqClient:
         if self._groq_client is None:
-            self._groq_client = GroqClient()
+            self._groq_client = GroqClient(limiter=self.limiter)
         return self._groq_client
 
     @property

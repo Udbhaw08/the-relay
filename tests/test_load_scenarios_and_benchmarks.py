@@ -171,6 +171,7 @@ def test_per_minute_limit_halved_scenario():
         csv_file = Path(tmpdir) / "halved_test.csv"
         pipeline = RelayPipeline()
         pipeline.router.stand_in_client.fast_mode = True
+        pipeline.router.stand_in_client.baseline_rpm = 1000
         pipeline.router.stand_in_client.rpm_limit = 1000
         initial_rpm = pipeline.router.stand_in_client.rpm_limit
 
@@ -274,3 +275,53 @@ def test_table_2_and_3_with_run_scoped_data():
         assert "### Table 2b:" in t2b
         assert "### Table 3:" in t3
         assert "Piece size 250" in t3
+
+# 9. Proof: A/B/C does not modify subsequent load scenario RPM
+def test_abc_does_not_modify_subsequent_load_scenario_rpm():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        csv_file = Path(tmpdir) / "rpm_leak_test.csv"
+        pipeline = RelayPipeline()
+        client = pipeline.router.stand_in_client
+        client.fast_mode = True
+        client.rpm_limit = 15  # Baseline RPM
+        logger = ResultsLogger(file_path=csv_file, run_id="leak_test")
+        gen = TrafficGenerator(pipeline=pipeline, logger=logger)
+
+        # Run A/B/C benchmarks (which internally use rpm_limit=1000 in isolated context)
+        gen.run_retrieval_setting_benchmark(setting_key="setting_a", source="stand-in", run_id="leak_test")
+        gen.run_retrieval_setting_benchmark(setting_key="setting_b", source="stand-in", run_id="leak_test")
+        gen.run_retrieval_setting_benchmark(setting_key="setting_c", source="stand-in", run_id="leak_test")
+
+        # Crucial assertion: baseline RPM MUST be strictly restored to 15, not 1000!
+        assert client.rpm_limit == 15, f"RPM limit leaked: expected 15, found {client.rpm_limit}"
+
+# 10. Proof: Per-minute scenario really uses half of baseline and triggers rate limiting
+def test_per_minute_scenario_halves_baseline_and_triggers_rate_limiting():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        csv_file = Path(tmpdir) / "halved_test.csv"
+        pipeline = RelayPipeline()
+        client = pipeline.router.stand_in_client
+        client.fast_mode = True
+        client.rpm_limit = 15
+        client.baseline_rpm = 15
+        logger = ResultsLogger(file_path=csv_file, run_id="halved_test")
+        gen = TrafficGenerator(pipeline=pipeline, logger=logger)
+
+        # Run halved scenario with 10 requests with rapid pacing (0.001s) and mock sleeper
+        results = gen.run_scenario_per_minute_halved(
+            num_requests=10,
+            source="stand-in",
+            run_id="halved_test",
+            pacing_delay=0.001,
+            sleeper=lambda _: None
+        )
+
+        # Verify halved stats in generator
+        stats = gen.last_halved_stats
+        assert stats["baseline_rpm"] == 15
+        assert stats["effective_rpm"] == 7  # 15 // 2 = 7 RPM!
+        assert client.rpm_limit == 7
+
+        # 10 requests against 7 RPM limit: at least one request MUST have been rate-limited
+        rate_limited_results = [r for r in results if r.status == "rate_limited" or r.retries > 0]
+        assert len(rate_limited_results) > 0, "Rate limiting was not exercised under halved limit!"

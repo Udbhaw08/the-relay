@@ -1,6 +1,6 @@
 # The Relay: Resilient Research Paper Assistant
 
-[![Tests](https://img.shields.io/badge/pytest-113%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/pytest-129%20passed-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-green.svg)]()
 
@@ -31,6 +31,9 @@ The assistant strictly answers from these three arXiv papers (fetched at exact s
   - **Zero Silent Fallback:** In Groq mode, network or rate-limit failures are surfaced explicitly; the system never silently masks errors with stand-in results.
 - **Adaptive Retrieval Degradation:**
   - Automatically downscales retrieval context (Setting B $\to$ Setting A) when upstream rate limits or 429 retries occur, cutting token burn by ~70%.
+- **Local Quota Limiting & Concurrency Control:**
+  - `LocalQuotaLimiter` protects runtime requests by reserving estimated input and output tokens before calls, enforcing RPM, TPM, RPD, and TPD local caps, and reconciling actual tokens after response completion.
+  - Bounded concurrent scheduler dispatches requests at target start-to-start intervals (1.0s) independently of individual query processing durations.
 
 ---
 
@@ -54,7 +57,7 @@ Fill in your Groq API key (`GROQ_API_KEY=...` and optionally `GROQ_MODEL=openai/
 ```bash
 pytest -v
 ```
-*(All 113 offline unit and integration tests pass; 1 opt-in live test is skipped by default).*
+*(All 129 offline unit and integration tests pass; 1 opt-in live test is skipped by default).*
 
 ### 4. Interactive CLI (`scripts/ask.py`)
 Run an answerable query using the offline stand-in:
@@ -81,7 +84,7 @@ streamlit run dashboard/app.py
 ### 6. Execute Full Benchmark Suite
 Run the reproducible benchmark runner (preserves historical results and records run-scoped artifacts to `data/runs/<run_id>/`):
 ```bash
-python scripts/run_benchmarks.py --offline-only --seed 42 --run-id phase9_final_eval
+python scripts/run_benchmarks.py --offline-only --seed 42 --run-id phase9_final_verified
 ```
 This runs:
 - Steady load scenario with start-to-start pacing
@@ -92,7 +95,12 @@ This runs:
 
 ### 7. Inspect Results & Validate Schema
 ```bash
-python scripts/compute_tables.py --csv data/runs/phase9_final_eval/results.csv --validate
+python scripts/compute_tables.py --csv data/runs/phase9_final_verified/results.csv --validate
+```
+
+### 8. Verify Submission Report 2-Page Fit
+```bash
+python scripts/verify_pdf_page_count.py
 ```
 
 ---
@@ -108,4 +116,4 @@ python scripts/compute_tables.py --csv data/runs/phase9_final_eval/results.csv -
 ---
 
 ## 📄 Submission Report
-Read the full 2-page engineering submission document at [`docs/SUBMISSION_REPORT.md`](docs/SUBMISSION_REPORT.md).
+Read the condensed 2-page engineering submission document at [`docs/SUBMISSION_REPORT.md`](docs/SUBMISSION_REPORT.md) (PDF rendering verified at [`docs/SUBMISSION_REPORT.pdf`](docs/SUBMISSION_REPORT.pdf)). Complete technical traces and appendices are in [`docs/implementation/FINAL_REPORT.md`](docs/implementation/FINAL_REPORT.md).

@@ -303,7 +303,7 @@ def test_smoke_test_blocks_without_authorization_flags():
 def test_compute_tables_table1_output():
     from scripts.compute_tables import generate_table_1
     t1 = generate_table_1()
-    assert "Table 1: Limits you found in the real service" in t1
+    assert "Table 1: Published Groq Free-plan limits" in t1
     assert "Groq Cloud" in t1 or "Groq" in t1
     assert "429" in t1
     assert "30 RPM" in t1

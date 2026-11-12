@@ -8,34 +8,48 @@ import random
 import threading
 from typing import Generator, Optional
 from collections import deque
+from contextlib import contextmanager
 from the_relay.models.base import BaseModelClient, ModelResponse
+from the_relay.config import (
+    SIMULATOR_BASELINE_RPM,
+    SIMULATOR_BASELINE_TPM,
+    SIMULATOR_BASELINE_RPD,
+    SIMULATOR_BASELINE_TPD,
+)
 
 class StandInModelClient(BaseModelClient):
     def __init__(
         self,
-        rpm_limit: int = 15,
-        tpm_limit: int = 1000000,
-        rpd_limit: int = 1500,
+        rpm_limit: Optional[int] = None,
+        tpm_limit: Optional[int] = None,
+        rpd_limit: Optional[int] = None,
+        tpd_limit: Optional[int] = None,
         base_ttft_ms: float = 1200.0,
         ttft_std_ms: float = 300.0,
         ms_per_token: float = 15.0,
-        failure_rate: float = 0.02,
-        timeout_rate: float = 0.01,
+        failure_rate: Optional[float] = None,
+        timeout_rate: Optional[float] = None,
         concurrency_penalty_factor: float = 0.08,
         random_seed: Optional[int] = None,
         fast_mode: bool = False
     ):
-        self.rpm_limit = rpm_limit
-        self.tpm_limit = tpm_limit
-        self.rpd_limit = rpd_limit
+        self.baseline_rpm = rpm_limit if rpm_limit is not None else SIMULATOR_BASELINE_RPM
+        self.baseline_tpm = tpm_limit if tpm_limit is not None else SIMULATOR_BASELINE_TPM
+        self.baseline_rpd = rpd_limit if rpd_limit is not None else SIMULATOR_BASELINE_RPD
+        self.baseline_tpd = tpd_limit if tpd_limit is not None else SIMULATOR_BASELINE_TPD
+
+        self.rpm_limit = self.baseline_rpm
+        self.tpm_limit = self.baseline_tpm
+        self.rpd_limit = self.baseline_rpd
+        self.tpd_limit = self.baseline_tpd
         self.fast_mode = fast_mode
         
         # Calibrated latency distribution parameters
         self.base_ttft_ms = base_ttft_ms
         self.ttft_std_ms = ttft_std_ms
         self.ms_per_token = ms_per_token
-        self.failure_rate = failure_rate
-        self.timeout_rate = timeout_rate
+        self.failure_rate = failure_rate if failure_rate is not None else (0.0 if fast_mode else 0.02)
+        self.timeout_rate = timeout_rate if timeout_rate is not None else (0.0 if fast_mode else 0.01)
         self.concurrency_penalty = concurrency_penalty_factor
         
         # Seeded random generator for reproducible simulation
@@ -49,8 +63,10 @@ class StandInModelClient(BaseModelClient):
         self._queue_depth = 0
         self._peak_queue_depth = 0
         self._peak_queue_length = 0  # legacy alias for max_concurrency
-        self._request_timestamps = deque()
+        self._request_timestamps = deque()  # stores timestamp (float)
+        self._token_timestamps = deque()    # stores (timestamp, token_count)
         self._daily_request_count = 0
+        self._daily_token_count = 0
         self._daily_budget_exhausted = False
         self._tpm_exhausted = False
         self._injected_fault: Optional[str] = None
@@ -64,7 +80,9 @@ class StandInModelClient(BaseModelClient):
         """Reset internal rate limiters, timestamps, daily counts, in-flight, and queue counters."""
         with self._lock:
             self._request_timestamps.clear()
+            self._token_timestamps.clear()
             self._daily_request_count = 0
+            self._daily_token_count = 0
             self._daily_budget_exhausted = False
             self._tpm_exhausted = False
             self._injected_fault = None
@@ -73,6 +91,36 @@ class StandInModelClient(BaseModelClient):
             self._queue_depth = 0
             self._peak_queue_depth = 0
             self._peak_queue_length = 0
+
+    def reset_to_baseline(self):
+        """Restore all rate limits to their baseline configurations and clear quota state."""
+        with self._lock:
+            self.rpm_limit = self.baseline_rpm
+            self.tpm_limit = self.baseline_tpm
+            self.rpd_limit = self.baseline_rpd
+            self.tpd_limit = self.baseline_tpd
+        self.reset_quota_state()
+
+    @contextmanager
+    def isolated_context(self, rpm_limit: Optional[int] = None, tpm_limit: Optional[int] = None):
+        """
+        Context manager guaranteeing that any temporary limit mutations (e.g. during A/B/C)
+        are strictly restored upon exit, even if exceptions occur.
+        """
+        with self._lock:
+            old_rpm = self.rpm_limit
+            old_tpm = self.tpm_limit
+            if rpm_limit is not None:
+                self.rpm_limit = rpm_limit
+            if tpm_limit is not None:
+                self.tpm_limit = tpm_limit
+        try:
+            yield
+        finally:
+            with self._lock:
+                self.rpm_limit = old_rpm
+                self.tpm_limit = old_tpm
+            self.reset_quota_state()
 
     def inject_fault(self, fault_type: str):
         """Deterministically inject simulated failure: '429', 'timeout', 'network_failure', '500'."""
@@ -126,13 +174,22 @@ class StandInModelClient(BaseModelClient):
         with self._lock:
             self._daily_budget_exhausted = True
 
-    def halve_rpm_limit(self):
-        """Halve the RPM limit (for Scenario 4)."""
+    def halve_rpm_limit(self, baseline: Optional[int] = None) -> int:
+        """
+        Halve the RPM limit relative to the explicit baseline (for Scenario 4).
+        Guarantees halving uses the configured baseline rather than any leaked test state.
+        """
         with self._lock:
-            self.rpm_limit = max(1, self.rpm_limit // 2)
+            base = baseline if baseline is not None else self.baseline_rpm
+            self.rpm_limit = max(1, base // 2)
+            return self.rpm_limit
 
-    def _check_rate_limits(self, now: float) -> Optional[tuple[str, dict[str, str]]]:
-        """Check if RPM, TPM, RPD, or injected faults are triggered. Returns (error_type, headers)."""
+    def _check_rate_limits(self, now: float, estimated_tokens: int = 50) -> Optional[tuple[str, dict[str, str]]]:
+        """
+        Check if RPM, TPM, RPD, TPD, or injected faults are triggered.
+        Enforces token limits by tracked token consumption, not only manually set booleans.
+        Returns (error_type, headers).
+        """
         with self._lock:
             if self._injected_fault:
                 if self._injected_fault in ("429", "rate_limited"):
@@ -152,40 +209,64 @@ class StandInModelClient(BaseModelClient):
                         "status_code": "500"
                     }
 
+            # Daily request budget check (RPD)
             if self._daily_budget_exhausted or self._daily_request_count >= self.rpd_limit:
                 return "rate_limited", {
-                    "error": "Daily budget exhausted",
-                    "retry-after": "43200",  # 12 hours until reset
+                    "error": "Daily request budget exhausted",
+                    "retry-after": "unknown",
                     "x-ratelimit-remaining-requests": "0",
                     "x-ratelimit-limit-requests": str(self.rpd_limit)
                 }
 
-            if self._tpm_exhausted:
+            # Daily token budget check (TPD)
+            if (self._daily_token_count + estimated_tokens) > self.tpd_limit:
                 return "rate_limited", {
-                    "error": "Token limit exceeded (TPM)",
-                    "retry-after": "20",
+                    "error": "Daily token budget exhausted (TPD)",
+                    "retry-after": "unknown",
                     "x-ratelimit-remaining-tokens": "0",
                     "x-ratelimit-limit-tokens": str(self.tpm_limit)
                 }
 
-            # Clean timestamps older than 60 seconds
+            # Clean timestamps older than 60 seconds (RPM)
             while self._request_timestamps and now - self._request_timestamps[0] > 60.0:
                 self._request_timestamps.popleft()
 
+            # Clean token reservations older than 60 seconds (TPM)
+            while self._token_timestamps and now - self._token_timestamps[0][0] > 60.0:
+                self._token_timestamps.popleft()
+
+            # Minute token budget check (TPM - enforced by actual tracked token consumption)
+            current_minute_tokens = sum(tok for _, tok in self._token_timestamps)
+            if self._tpm_exhausted or (current_minute_tokens + estimated_tokens > self.tpm_limit):
+                oldest_tok_ts = self._token_timestamps[0][0] if self._token_timestamps else now
+                retry_wait = max(1, int(60.0 - (now - oldest_tok_ts)))
+                return "rate_limited", {
+                    "error": f"Token limit exceeded ({self.tpm_limit} TPM)",
+                    "retry-after": str(retry_wait),
+                    "x-ratelimit-remaining-tokens": "0",
+                    "x-ratelimit-limit-tokens": str(self.tpm_limit)
+                }
+
+            # Minute request budget check (RPM)
             if len(self._request_timestamps) >= self.rpm_limit:
                 retry_wait = max(1, int(60.0 - (now - self._request_timestamps[0])))
                 return "rate_limited", {
                     "error": f"Rate limit exceeded ({self.rpm_limit} RPM)",
                     "retry-after": str(retry_wait),
-                    "x-ratelimit-remaining-tokens": "0"
+                    "x-ratelimit-remaining-requests": "0",
+                    "x-ratelimit-limit-requests": str(self.rpd_limit)
                 }
 
-            # Request accepted
+            # Request accepted - record admission and reservations
             self._request_timestamps.append(now)
+            self._token_timestamps.append((now, estimated_tokens))
             self._daily_request_count += 1
+            self._daily_token_count += estimated_tokens
             rem_daily = str(max(0, self.rpd_limit - self._daily_request_count))
+            rem_tokens = str(max(0, self.tpm_limit - (current_minute_tokens + estimated_tokens)))
             return None, {
                 "x-ratelimit-remaining-requests": rem_daily,
+                "x-ratelimit-remaining-tokens": rem_tokens,
                 "x-ratelimit-limit-requests": str(self.rpd_limit),
                 "x-ratelimit-limit-tokens": str(self.tpm_limit)
             }
@@ -212,7 +293,7 @@ class StandInModelClient(BaseModelClient):
         tokens_in = max(1, len(prompt.split()) * 4 // 3)
 
         # Check rate limits
-        limit_error, headers = self._check_rate_limits(t0)
+        limit_error, headers = self._check_rate_limits(t0, estimated_tokens=tokens_in + 50)
         if limit_error == "rate_limited":
             total_ms = (time.perf_counter() - start_perf) * 1000.0
             return ModelResponse(
@@ -287,7 +368,8 @@ class StandInModelClient(BaseModelClient):
             # Simulate random network fault / timeout
             roll = self._rng.random()
             if roll < self.timeout_rate:
-                time.sleep(0.5)  # simulate hanging call
+                if not self.fast_mode:
+                    time.sleep(0.5)  # simulate hanging call
                 total_ms = (time.perf_counter() - start_perf) * 1000.0
                 return ModelResponse(
                     text="",
@@ -346,6 +428,15 @@ class StandInModelClient(BaseModelClient):
 
             actual_total_ms = (time.perf_counter() - start_perf) * 1000.0
 
+            # Reconcile actual token counts
+            actual_total = tokens_in + tokens_out
+            delta = actual_total - (tokens_in + 50)
+            with self._lock:
+                self._daily_token_count = max(0, self._daily_token_count + delta)
+                if self._token_timestamps:
+                    ts, tok = self._token_timestamps[-1]
+                    self._token_timestamps[-1] = (ts, max(0, tok + delta))
+
             return ModelResponse(
                 text=simulated_text,
                 first_token_ms=round(ttft_ms, 1),
@@ -376,7 +467,7 @@ class StandInModelClient(BaseModelClient):
         start_perf = time.perf_counter()
         tokens_in = max(1, len(prompt.split()) * 4 // 3)
 
-        limit_error, headers = self._check_rate_limits(t0)
+        limit_error, headers = self._check_rate_limits(t0, estimated_tokens=tokens_in + 50)
         if limit_error == "rate_limited":
             total_ms = (time.perf_counter() - start_perf) * 1000.0
             return ModelResponse(
@@ -464,6 +555,15 @@ class StandInModelClient(BaseModelClient):
                 yield chunk
                 if not self.fast_mode:
                     time.sleep(min((self.ms_per_token * chunk_size) / 1000.0, 0.1))
+
+            # Reconcile actual token counts
+            actual_total = tokens_in + tokens_out
+            delta = actual_total - (tokens_in + 50)
+            with self._lock:
+                self._daily_token_count = max(0, self._daily_token_count + delta)
+                if self._token_timestamps:
+                    ts, tok = self._token_timestamps[-1]
+                    self._token_timestamps[-1] = (ts, max(0, tok + delta))
 
             return ModelResponse(
                 text=simulated_text,

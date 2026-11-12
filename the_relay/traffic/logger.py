@@ -36,7 +36,13 @@ CSV_COLUMNS = [
     "processing_ms",
     "total_wall_ms",
     "queue_depth",
-    "concurrency"
+    "admission_queue_depth",
+    "concurrency",
+    "scheduled_offset_s",
+    "dispatch_offset_s",
+    "dispatch_lateness_ms",
+    "queue_arrival_time",
+    "processing_start_time"
 ]
 
 LEGACY_CSV_COLUMNS = [
@@ -120,7 +126,13 @@ class ResultsLogger:
             "processing_ms": f"{res.processing_ms:.1f}" if res.processing_ms is not None else "",
             "total_wall_ms": f"{res.total_wall_ms:.1f}" if res.total_wall_ms is not None else "",
             "queue_depth": res.queue_depth if res.queue_depth is not None else "",
-            "concurrency": res.concurrency if res.concurrency is not None else ""
+            "admission_queue_depth": getattr(res, "admission_queue_depth", "") if getattr(res, "admission_queue_depth", None) is not None else "",
+            "concurrency": res.concurrency if res.concurrency is not None else "",
+            "scheduled_offset_s": f"{res.scheduled_offset_s:.3f}" if getattr(res, "scheduled_offset_s", None) is not None else "",
+            "dispatch_offset_s": f"{res.dispatch_offset_s:.3f}" if getattr(res, "dispatch_offset_s", None) is not None else "",
+            "dispatch_lateness_ms": f"{res.dispatch_lateness_ms:.1f}" if getattr(res, "dispatch_lateness_ms", None) is not None else "",
+            "queue_arrival_time": f"{res.queue_arrival_time:.3f}" if getattr(res, "queue_arrival_time", None) is not None else "",
+            "processing_start_time": f"{res.processing_start_time:.3f}" if getattr(res, "processing_start_time", None) is not None else ""
         }
         with self._lock:
             with open(self.file_path, "a", newline="", encoding="utf-8") as f:

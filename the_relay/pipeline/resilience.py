@@ -188,7 +188,7 @@ def is_retryable_error(
     msg = (error_message or "").lower()
 
     # Daily budget exhaustion is non-retryable
-    if "daily budget" in msg or "daily limit" in msg or "rpd limit" in msg:
+    if ("daily" in msg and "budget" in msg) or "daily limit" in msg or "rpd limit" in msg or "tpd limit" in msg:
         return False
 
     # Permanent authentication or invalid request errors
@@ -215,6 +215,7 @@ def format_daily_exhaustion_message(reset_seconds: Optional[float] = None) -> st
     """
     User-facing notice when daily query budget is exhausted.
     Uses actual reset duration when available from provider headers, rather than guessing.
+    When reset metadata is unknown, reports it as unknown.
     """
     if reset_seconds is not None and reset_seconds > 0:
         hrs = int(reset_seconds // 3600)
@@ -224,7 +225,7 @@ def format_daily_exhaustion_message(reset_seconds: Optional[float] = None) -> st
         else:
             time_str = f"in approximately {max(1, mins)} minute(s)"
     else:
-        time_str = "at the provider's next daily quota reset window"
+        time_str = "at the provider's next daily quota reset window (exact reset time unknown)"
 
     return (
         f"⚠️ Daily Query Budget Exhausted: The system's daily LLM inference capacity has reached its limit "
@@ -236,7 +237,8 @@ def format_daily_exhaustion_message(reset_seconds: Optional[float] = None) -> st
 class LocalQuotaLimiter:
     """
     Thread-safe local rolling-window request and token budget limiter.
-    Enforces RPM, TPM, RPD, and TPD quotas with token reservation and post-request reconciliation.
+    Enforces RPM, TPM, RPD, and TPD quotas with token reservation, release on failure,
+    and post-request reconciliation against provider usage metadata.
     """
     def __init__(
         self,
@@ -244,13 +246,17 @@ class LocalQuotaLimiter:
         tpm_limit: int = LOCAL_TPM_LIMIT,
         rpd_limit: int = LOCAL_RPD_LIMIT,
         tpd_limit: int = LOCAL_TPD_LIMIT,
-        clock_fn: Callable[[], float] = time.time
+        clock_fn: Callable[[], float] = time.time,
+        daily_window_seconds: float = 86400.0,
+        reset_at_utc_midnight: bool = False
     ):
         self.rpm_limit = rpm_limit
         self.tpm_limit = tpm_limit
         self.rpd_limit = rpd_limit
         self.tpd_limit = tpd_limit
         self._clock_fn = clock_fn
+        self.daily_window_seconds = daily_window_seconds
+        self.reset_at_utc_midnight = reset_at_utc_midnight
 
         self._lock = threading.Lock()
         self._request_timestamps = deque()  # stores (timestamp, request_id)
@@ -259,6 +265,8 @@ class LocalQuotaLimiter:
         self._daily_token_count = 0
         self._daily_exhausted = False
         self._reservation_map: dict[str, int] = {}
+        self._active_in_flight: set[str] = set()
+        self._daily_window_start: float = self._clock_fn()
 
     def reset(self):
         """Reset internal rate limit windows, daily counts, and reservations."""
@@ -266,9 +274,11 @@ class LocalQuotaLimiter:
             self._request_timestamps.clear()
             self._token_reservations.clear()
             self._reservation_map.clear()
+            self._active_in_flight.clear()
             self._daily_request_count = 0
             self._daily_token_count = 0
             self._daily_exhausted = False
+            self._daily_window_start = self._clock_fn()
 
     def exhaust_daily_budget(self):
         """Force limiter into daily budget exhausted state."""
@@ -290,6 +300,66 @@ class LocalQuotaLimiter:
             _, res_id, _ = self._token_reservations.popleft()
             self._reservation_map.pop(res_id, None)
 
+    def _check_and_rollover_daily_window(self, now: float):
+        """
+        Explicit daily quota-window rollover.
+        Never silently reset counters while active requests are in flight.
+        """
+        if self._active_in_flight:
+            return
+
+        if self.reset_at_utc_midnight:
+            import datetime
+            current_dt = datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)
+            start_dt = datetime.datetime.fromtimestamp(self._daily_window_start, tz=datetime.timezone.utc)
+            if current_dt.date() > start_dt.date():
+                self._daily_request_count = 0
+                self._daily_token_count = 0
+                self._daily_exhausted = False
+                self._daily_window_start = now
+        else:
+            if now - self._daily_window_start >= self.daily_window_seconds:
+                self._daily_request_count = 0
+                self._daily_token_count = 0
+                self._daily_exhausted = False
+                self._daily_window_start = now
+
+    def get_daily_reset_seconds(self, now: float) -> Optional[float]:
+        """
+        Calculate seconds until daily reset window.
+        Returns None (unknown) if window is indeterminate.
+        """
+        if self.reset_at_utc_midnight:
+            import datetime
+            dt = datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)
+            next_midnight = (dt + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            return max(1.0, (next_midnight - dt).total_seconds())
+        elif self.daily_window_seconds > 0:
+            elapsed = now - self._daily_window_start
+            rem = self.daily_window_seconds - elapsed
+            return max(1.0, rem) if rem > 0 else 1.0
+        return None
+
+    def get_active_requests_in_minute(self) -> int:
+        now = self._clock_fn()
+        with self._lock:
+            self._expire_rolling_windows(now)
+            return len(self._request_timestamps)
+
+    def get_active_tokens_in_minute(self) -> int:
+        now = self._clock_fn()
+        with self._lock:
+            self._expire_rolling_windows(now)
+            return sum(tok for _, _, tok in self._token_reservations)
+
+    def get_daily_request_count(self) -> int:
+        with self._lock:
+            return self._daily_request_count
+
+    def get_daily_token_count(self) -> int:
+        with self._lock:
+            return self._daily_token_count
+
     def reserve(
         self,
         estimated_tokens: int = 150,
@@ -301,18 +371,25 @@ class LocalQuotaLimiter:
         """
         now = self._clock_fn()
         with self._lock:
+            self._check_and_rollover_daily_window(now)
+
+            reset_sec = self.get_daily_reset_seconds(now)
+            retry_after_str = str(int(reset_sec)) if reset_sec is not None else "unknown"
+
             if self._daily_exhausted or self._daily_request_count >= self.rpd_limit:
                 return False, "daily_budget_exhausted", {
-                    "error": "Daily request budget exhausted",
-                    "retry-after": "43200",
-                    "x-ratelimit-remaining-requests": "0"
+                    "error": f"Daily request budget exhausted ({self.rpd_limit} RPD)",
+                    "retry-after": retry_after_str,
+                    "x-ratelimit-remaining-requests": "0",
+                    "x-ratelimit-limit-requests": str(self.rpd_limit)
                 }
 
             if self._daily_token_count + estimated_tokens > self.tpd_limit:
                 return False, "daily_budget_exhausted", {
-                    "error": "Daily token budget exhausted",
-                    "retry-after": "43200",
-                    "x-ratelimit-remaining-tokens": "0"
+                    "error": f"Daily token budget exhausted ({self.tpd_limit} TPD)",
+                    "retry-after": retry_after_str,
+                    "x-ratelimit-remaining-tokens": "0",
+                    "x-ratelimit-limit-tokens": str(self.tpm_limit)
                 }
 
             self._expire_rolling_windows(now)
@@ -324,7 +401,8 @@ class LocalQuotaLimiter:
                 return False, "rpm_limit_exceeded", {
                     "error": f"Local RPM limit exceeded ({self.rpm_limit} RPM)",
                     "retry-after": str(retry_wait),
-                    "x-ratelimit-remaining-requests": "0"
+                    "x-ratelimit-remaining-requests": "0",
+                    "x-ratelimit-limit-requests": str(self.rpd_limit)
                 }
 
             # Check TPM
@@ -335,7 +413,8 @@ class LocalQuotaLimiter:
                 return False, "tpm_limit_exceeded", {
                     "error": f"Local TPM limit exceeded ({self.tpm_limit} TPM)",
                     "retry-after": str(retry_wait),
-                    "x-ratelimit-remaining-tokens": "0"
+                    "x-ratelimit-remaining-tokens": "0",
+                    "x-ratelimit-limit-tokens": str(self.tpm_limit)
                 }
 
             # Reserve capacity
@@ -344,6 +423,7 @@ class LocalQuotaLimiter:
             self._request_timestamps.append((now, eff_req_id))
             self._token_reservations.append((now, res_id, estimated_tokens))
             self._reservation_map[res_id] = estimated_tokens
+            self._active_in_flight.add(res_id)
             self._daily_request_count += 1
             self._daily_token_count += estimated_tokens
 
@@ -363,7 +443,13 @@ class LocalQuotaLimiter:
         Reconcile estimated token reservation with actual provider token consumption.
         Adjusts rolling minute and daily counters based on the delta.
         """
+        try:
+            actual_tokens = int(actual_tokens)
+        except (ValueError, TypeError):
+            return
+
         with self._lock:
+            self._active_in_flight.discard(reservation_id)
             est_tokens = self._reservation_map.get(reservation_id)
             if est_tokens is None:
                 return
@@ -379,6 +465,27 @@ class LocalQuotaLimiter:
 
             # Adjust daily count
             self._daily_token_count = max(0, self._daily_token_count + delta)
+
+    def release(self, reservation_id: str):
+        """
+        Release a token reservation when an attempt failed without consuming tokens.
+        Safely decrements the reserved token capacity so failed requests do not lock out budgets.
+        """
+        with self._lock:
+            self._active_in_flight.discard(reservation_id)
+            est_tokens = self._reservation_map.pop(reservation_id, None)
+            if est_tokens is None:
+                return
+
+            try:
+                est_val = int(est_tokens)
+            except (ValueError, TypeError):
+                est_val = 0
+
+            self._token_reservations = deque(
+                (ts, r_id, tok) for (ts, r_id, tok) in self._token_reservations if r_id != reservation_id
+            )
+            self._daily_token_count = max(0, self._daily_token_count - est_val)
 
 class BackpressureController:
     """

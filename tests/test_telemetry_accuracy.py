@@ -170,14 +170,15 @@ def test_queue_depth_distinct_from_in_flight():
     adm2, t_sub2 = tracker.submit_task()
     assert tracker._queue_depth == 2
 
-    wait1, q_rem1, inflight1 = tracker.start_task(t_sub1)
-    assert q_rem1 == 1
+    wait1, q_adm1, inflight1 = tracker.start_task(t_sub1)
+    assert q_adm1 == 2  # Admission queue depth prior to dequeue
     assert inflight1 == 1
     assert wait1 >= 0.0
 
-    wait2, q_rem2, inflight2 = tracker.start_task(t_sub2)
-    assert q_rem2 == 0
+    wait2, q_adm2, inflight2 = tracker.start_task(t_sub2)
+    assert q_adm2 == 1  # Admission queue depth for second task
     assert inflight2 == 2
+    assert tracker._queue_depth == 0  # Queue is now empty after both dequeued
 
     tracker.finish_task()
     tracker.finish_task()

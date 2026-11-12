@@ -98,6 +98,12 @@ LOCAL_TPD_LIMIT = int(os.getenv("LOCAL_TPD_LIMIT", "200000"))
 MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "5"))
 MAX_QUEUE_CAPACITY = int(os.getenv("MAX_QUEUE_CAPACITY", "50"))
 
+# Stand-in simulator baseline settings (calibrated offline simulation)
+SIMULATOR_BASELINE_RPM = int(os.getenv("SIMULATOR_BASELINE_RPM", "15"))
+SIMULATOR_BASELINE_TPM = int(os.getenv("SIMULATOR_BASELINE_TPM", "1000000"))
+SIMULATOR_BASELINE_RPD = int(os.getenv("SIMULATOR_BASELINE_RPD", "1500"))
+SIMULATOR_BASELINE_TPD = int(os.getenv("SIMULATOR_BASELINE_TPD", "2000000"))
+
 def validate_groq_config():
     """Startup validation: verify that GROQ_API_KEY is present and GROQ_MODEL is valid when in Groq mode."""
     if LLM_PROVIDER in ("groq", "real"):

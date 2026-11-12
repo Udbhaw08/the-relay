@@ -37,7 +37,13 @@ OPTIONAL_COLUMNS = [
     "processing_ms",
     "total_wall_ms",
     "queue_depth",
-    "concurrency"
+    "admission_queue_depth",
+    "concurrency",
+    "scheduled_offset_s",
+    "dispatch_offset_s",
+    "dispatch_lateness_ms",
+    "queue_arrival_time",
+    "processing_start_time"
 ]
 
 ALLOWED_STATUSES = {"ok", "rate_limited", "timeout", "error"}

@@ -6,6 +6,7 @@ import groq
 from groq import Groq
 from the_relay.models.base import BaseModelClient, ModelResponse
 from the_relay.config import GROQ_API_KEY, GROQ_MODEL, REQUEST_TIMEOUT_SECONDS, GROQ_BASE_URL, RETIRED_MODELS
+from the_relay.pipeline.resilience import LocalQuotaLimiter
 
 def sanitize_error(error_message: str, api_key: Optional[str] = None) -> str:
     """Sanitize error messages to ensure API keys, auth tokens, and sensitive headers are never leaked."""
@@ -68,7 +69,8 @@ class GroqClient(BaseModelClient):
         model_name: Optional[str] = None,
         timeout: float = REQUEST_TIMEOUT_SECONDS,
         base_url: Optional[str] = None,
-        client: Optional[Any] = None
+        client: Optional[Any] = None,
+        limiter: Optional[LocalQuotaLimiter] = None
     ):
         if api_key is not None:
             self.api_key = api_key
@@ -100,6 +102,7 @@ class GroqClient(BaseModelClient):
         self.model_name = target_model
         self.timeout = timeout
         self.base_url = target_base_url
+        self.limiter = limiter if limiter is not None else LocalQuotaLimiter()
 
         if client is not None:
             self.client = client
@@ -115,11 +118,41 @@ class GroqClient(BaseModelClient):
     def generate(
         self, prompt: str, system_prompt: Optional[str] = None, max_tokens: int = 1000
     ) -> ModelResponse:
-        """Call Groq API synchronously while capturing latency metrics and usage."""
+        """Call Groq API synchronously while capturing latency metrics, usage, and enforcing local quota limits."""
         start_time = time.perf_counter()
         tokens_in = max(1, len(prompt.split()) * 4 // 3)
         tokens_out = 0
 
+        # Enforce local safety budget (RPM, TPM, RPD, TPD) before real provider call
+        est_tokens = tokens_in + max_tokens
+        is_allowed, reason, quota_meta = self.limiter.reserve(
+            estimated_tokens=est_tokens,
+            request_id=f"groq_{int(time.time() * 1000)}"
+        )
+        if not is_allowed:
+            total_ms = (time.perf_counter() - start_time) * 1000.0
+            err_msg = quota_meta.get("error", f"Local safety quota exceeded ({reason})")
+            return ModelResponse(
+                text="",
+                first_token_ms=None,
+                total_ms=round(total_ms, 1),
+                tokens_in=tokens_in,
+                tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=tokens_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=tokens_in,
+                is_simulated=False,
+                provider="groq",
+                model_name=self.model_name,
+                status="rate_limited",
+                error_message=err_msg,
+                rate_limit_headers=quota_meta
+            )
+
+        reservation_id = quota_meta.get("reservation_id")
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -147,9 +180,14 @@ class GroqClient(BaseModelClient):
             actual_out: Optional[int] = None
             actual_tot: Optional[int] = None
             if hasattr(completion, "usage") and completion.usage:
-                actual_in = getattr(completion.usage, "prompt_tokens", None)
-                actual_out = getattr(completion.usage, "completion_tokens", None)
-                actual_tot = getattr(completion.usage, "total_tokens", None)
+                raw_in = getattr(completion.usage, "prompt_tokens", None)
+                raw_out = getattr(completion.usage, "completion_tokens", None)
+                raw_tot = getattr(completion.usage, "total_tokens", None)
+                actual_in = raw_in if isinstance(raw_in, int) else None
+                actual_out = raw_out if isinstance(raw_out, int) else None
+                actual_tot = raw_tot if isinstance(raw_tot, int) else (
+                    (actual_in + actual_out) if (actual_in is not None and actual_out is not None) else None
+                )
 
             est_in = max(1, len(prompt.split()) * 4 // 3)
             est_out = max(1, len(content.split()) * 4 // 3)
@@ -157,6 +195,11 @@ class GroqClient(BaseModelClient):
 
             tokens_in = actual_in if actual_in is not None else est_in
             tokens_out = actual_out if actual_out is not None else est_out
+
+            # Reconcile estimated token reservation against actual provider usage
+            if reservation_id:
+                reconciled_tot = actual_tot if actual_tot is not None else (tokens_in + tokens_out)
+                self.limiter.reconcile(reservation_id, reconciled_tot)
 
             # Extract rate limit headers from HTTP response
             rate_limit_headers = extract_rate_limit_headers(raw_response.headers)
@@ -185,6 +228,8 @@ class GroqClient(BaseModelClient):
             )
 
         except groq.RateLimitError as rle:
+            if reservation_id:
+                self.limiter.release(reservation_id)
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
             resp = getattr(rle, "response", None)
@@ -211,6 +256,8 @@ class GroqClient(BaseModelClient):
                 rate_limit_headers=headers
             )
         except groq.AuthenticationError as ae:
+            if reservation_id:
+                self.limiter.release(reservation_id)
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
             resp = getattr(ae, "response", None)
@@ -237,6 +284,8 @@ class GroqClient(BaseModelClient):
                 rate_limit_headers=headers
             )
         except groq.APITimeoutError as te:
+            if reservation_id:
+                self.limiter.release(reservation_id)
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
             est_in = max(1, len(prompt.split()) * 4 // 3)
@@ -259,6 +308,8 @@ class GroqClient(BaseModelClient):
                 error_message=sanitize_error(f"Groq request timed out: {te}", self.api_key)
             )
         except (groq.APIConnectionError, groq.InternalServerError, groq.APIStatusError) as ase:
+            if reservation_id:
+                self.limiter.release(reservation_id)
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
             resp_headers = getattr(ase, "response", None)
@@ -287,6 +338,8 @@ class GroqClient(BaseModelClient):
                 rate_limit_headers=headers
             )
         except Exception as e:
+            if reservation_id:
+                self.limiter.release(reservation_id)
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
             est_in = max(1, len(prompt.split()) * 4 // 3)
@@ -312,7 +365,7 @@ class GroqClient(BaseModelClient):
     def stream_generate(
         self, prompt: str, system_prompt: Optional[str] = None, max_tokens: int = 1000
     ) -> Generator[str, None, ModelResponse]:
-        """Stream chunks from Groq, tracking TTFT and returning final ModelResponse."""
+        """Stream chunks from Groq, tracking TTFT, enforcing local quotas, and returning final ModelResponse."""
         start_time = time.perf_counter()
         first_token_ms = 0.0
         full_text = ""
@@ -323,6 +376,36 @@ class GroqClient(BaseModelClient):
         actual_usage_out: Optional[int] = None
         actual_usage_tot: Optional[int] = None
 
+        # Enforce local safety budget (RPM, TPM, RPD, TPD) before real provider call
+        est_tokens = tokens_in + max_tokens
+        is_allowed, reason, quota_meta = self.limiter.reserve(
+            estimated_tokens=est_tokens,
+            request_id=f"groq_stream_{int(time.time() * 1000)}"
+        )
+        if not is_allowed:
+            total_ms = (time.perf_counter() - start_time) * 1000.0
+            err_msg = quota_meta.get("error", f"Local safety quota exceeded ({reason})")
+            return ModelResponse(
+                text="",
+                first_token_ms=None,
+                total_ms=round(total_ms, 1),
+                tokens_in=tokens_in,
+                tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=tokens_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=tokens_in,
+                is_simulated=False,
+                provider="groq",
+                model_name=self.model_name,
+                status="rate_limited",
+                error_message=err_msg,
+                rate_limit_headers=quota_meta
+            )
+
+        reservation_id = quota_meta.get("reservation_id")
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -352,13 +435,13 @@ class GroqClient(BaseModelClient):
                     u_in = getattr(chunk.usage, "prompt_tokens", None)
                     u_out = getattr(chunk.usage, "completion_tokens", None)
                     u_tot = getattr(chunk.usage, "total_tokens", None)
-                    if u_in is not None:
+                    if isinstance(u_in, int):
                         actual_usage_in = u_in
                         tokens_in = u_in
-                    if u_out is not None:
+                    if isinstance(u_out, int):
                         actual_usage_out = u_out
                         tokens_out = u_out
-                    if u_tot is not None:
+                    if isinstance(u_tot, int):
                         actual_usage_tot = u_tot
                 if hasattr(chunk, "id") and chunk.id:
                     rate_limit_headers["id"] = str(chunk.id)
@@ -379,6 +462,11 @@ class GroqClient(BaseModelClient):
                 (actual_usage_in + actual_usage_out) if (actual_usage_in is not None and actual_usage_out is not None) else None
             )
 
+            # Reconcile estimated token reservation against actual provider usage
+            if reservation_id:
+                reconciled_tot = actual_tot if actual_tot is not None else (tokens_in + (tokens_out if tokens_out > 0 else est_out))
+                self.limiter.reconcile(reservation_id, reconciled_tot)
+
             return ModelResponse(
                 text=full_text,
                 first_token_ms=final_first_token_ms,
@@ -398,6 +486,8 @@ class GroqClient(BaseModelClient):
                 rate_limit_headers=rate_limit_headers
             )
         except groq.RateLimitError as rle:
+            if reservation_id:
+                self.limiter.release(reservation_id)
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
             resp = getattr(rle, "response", None)
@@ -425,6 +515,8 @@ class GroqClient(BaseModelClient):
                 rate_limit_headers=headers
             )
         except groq.AuthenticationError as ae:
+            if reservation_id:
+                self.limiter.release(reservation_id)
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
             resp = getattr(ae, "response", None)
@@ -452,6 +544,8 @@ class GroqClient(BaseModelClient):
                 rate_limit_headers=headers
             )
         except groq.APITimeoutError as te:
+            if reservation_id:
+                self.limiter.release(reservation_id)
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
             ttft = round(first_token_ms, 1) if (first_token_ms > 0.0 and full_text.strip()) else None
@@ -475,6 +569,8 @@ class GroqClient(BaseModelClient):
                 error_message=sanitize_error(f"Groq request timed out: {te}", self.api_key)
             )
         except (groq.APIConnectionError, groq.InternalServerError, groq.APIStatusError) as ase:
+            if reservation_id:
+                self.limiter.release(reservation_id)
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
             resp_headers = getattr(ase, "response", None)
@@ -504,6 +600,8 @@ class GroqClient(BaseModelClient):
                 rate_limit_headers=headers
             )
         except Exception as e:
+            if reservation_id:
+                self.limiter.release(reservation_id)
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
             ttft = round(first_token_ms, 1) if (first_token_ms > 0.0 and full_text.strip()) else None

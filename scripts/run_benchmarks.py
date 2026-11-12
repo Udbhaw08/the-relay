@@ -151,7 +151,8 @@ def main():
             "duration_seconds": duration_sec,
             "steady_stats": generator.last_steady_stats,
             "burst_accounting": generator.last_burst_stats,
-            "sustained_stats": generator.last_sustained_stats
+            "sustained_stats": generator.last_sustained_stats,
+            "halved_stats": generator.last_halved_stats
         }
     )
 

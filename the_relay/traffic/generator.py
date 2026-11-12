@@ -46,16 +46,17 @@ class ConcurrencyTracker:
             return True, time.perf_counter()
 
     def start_task(self, submit_time: Any) -> tuple[float, int, int]:
-        """Record task admission into active execution."""
+        """Record task admission into active execution. Returns (wait_ms, admission_queue_depth, in_flight)."""
         ts = submit_time[1] if isinstance(submit_time, tuple) else float(submit_time)
         with self._lock:
             self.accepted_count += 1
+            admission_depth = self._queue_depth
             self._queue_depth = max(0, self._queue_depth - 1)
             self._in_flight += 1
             if self._in_flight > self._max_concurrency:
                 self._max_concurrency = self._in_flight
             wait_ms = max(0.0, (time.perf_counter() - ts) * 1000.0)
-            return wait_ms, self._queue_depth, self._in_flight
+            return wait_ms, admission_depth, self._in_flight
 
     def finish_task(self, status: str = "ok"):
         """Record task completion and count outcomes."""
@@ -86,6 +87,7 @@ class TrafficGenerator:
         self.last_burst_stats: dict[str, Any] = {}
         self.last_sustained_stats: dict[str, Any] = {}
         self.last_steady_stats: dict[str, Any] = {}
+        self.last_halved_stats: dict[str, Any] = {}
 
     def run_scenario_steady(
         self,
@@ -122,6 +124,8 @@ class TrafficGenerator:
         def _worker(idx: int, admitted: bool, t_submit: float, target_start: float, lateness: float):
             bq = BENCHMARK_QUESTIONS[idx % len(BENCHMARK_QUESTIONS)]
             req_id = f"steady_{source}_{idx+1:03d}"
+            sched_offset = round(target_start - schedule_start_perf, 3)
+            disp_offset = round(t_submit - schedule_start_perf, 3)
 
             if not admitted:
                 # Backpressure rejection if queue limit breached
@@ -144,6 +148,12 @@ class TrafficGenerator:
                     answer_grade="rate_limited",
                     answer="Request rejected due to bounded queue capacity backpressure in steady scenario.",
                     run_id=effective_run_id,
+                    queue_depth=tracker.max_queue,
+                    admission_queue_depth=tracker.max_queue,
+                    scheduled_offset_s=sched_offset,
+                    dispatch_offset_s=disp_offset,
+                    dispatch_lateness_ms=round(lateness, 1),
+                    queue_arrival_time=t_submit,
                     timestamps={
                         "scheduled_start_perf": target_start,
                         "actual_dispatch_perf": t_submit,
@@ -154,6 +164,7 @@ class TrafficGenerator:
                 return res
 
             wait_ms, q_depth, in_flight = tracker.start_task(t_submit)
+            t_proc_start = time.perf_counter()
             try:
                 res = self.pipeline.run_request(
                     query=bq.question,
@@ -169,6 +180,12 @@ class TrafficGenerator:
                     queue_depth=q_depth,
                     concurrency=in_flight
                 )
+                res.admission_queue_depth = q_depth
+                res.scheduled_offset_s = sched_offset
+                res.dispatch_offset_s = disp_offset
+                res.dispatch_lateness_ms = round(lateness, 1)
+                res.queue_arrival_time = t_submit
+                res.processing_start_time = t_proc_start
                 res.timestamps["scheduled_start_perf"] = target_start
                 res.timestamps["actual_dispatch_perf"] = t_submit
                 res.timestamps["dispatch_lateness_ms"] = lateness
@@ -262,6 +279,7 @@ class TrafficGenerator:
                     processing_ms=0.5,
                     queue_wait_ms=0.0,
                     queue_depth=tracker.max_queue,
+                    admission_queue_depth=tracker.max_queue,
                     concurrency=tracker.max_concurrency,
                     status="rate_limited",
                     retries=0,
@@ -294,6 +312,7 @@ class TrafficGenerator:
                     concurrency=in_flight,
                     sleeper=sleeper
                 )
+                res.admission_queue_depth = q_depth
                 self.logger.log_result(res)
                 return res
             finally:
@@ -353,6 +372,7 @@ class TrafficGenerator:
                     processing_ms=0.5,
                     queue_wait_ms=0.0,
                     queue_depth=tracker.max_queue,
+                    admission_queue_depth=tracker.max_queue,
                     concurrency=tracker.max_concurrency,
                     status="rate_limited",
                     retries=0,
@@ -385,6 +405,7 @@ class TrafficGenerator:
                     concurrency=in_flight,
                     sleeper=sleeper
                 )
+                res.admission_queue_depth = q_depth
                 self.logger.log_result(res)
                 return res
             finally:
@@ -411,20 +432,33 @@ class TrafficGenerator:
 
     def run_scenario_per_minute_halved(
         self,
-        num_requests: int = 20,
+        num_requests: int = 15,
         source: str = "stand-in",
         run_id: Optional[str] = None,
         sleeper: Optional[Any] = None,
-        pacing_delay: float = 1.0
+        pacing_delay: float = 1.0,
+        baseline_rpm: Optional[int] = None
     ) -> list[PipelineResult]:
         """
         Scenario 4: Per-minute limit halved.
         Tests how the system throttles and queues when the provider cuts RPM quota by 50%.
         """
+        from the_relay.config import SIMULATOR_BASELINE_RPM
         effective_run_id = run_id or "default_run"
         print(f"\n[TrafficGenerator] Running Scenario: PER-MINUTE LIMIT HALVED (Source={source}, run_id={effective_run_id})...")
+        effective_rpm = None
+        eff_baseline = None
         if source in ("stand-in", "standin"):
-            self.pipeline.router.stand_in_client.halve_rpm_limit()
+            client = self.pipeline.router.stand_in_client
+            eff_baseline = baseline_rpm or client.baseline_rpm or SIMULATOR_BASELINE_RPM
+            client.halve_rpm_limit(baseline=eff_baseline)
+            effective_rpm = client.rpm_limit
+
+        self.last_halved_stats = {
+            "baseline_rpm": eff_baseline,
+            "effective_rpm": effective_rpm,
+            "requests_sent": num_requests
+        }
         results = []
 
         for i in range(num_requests):
@@ -500,7 +534,8 @@ class TrafficGenerator:
         setting_key: str,
         source: str = "stand-in",
         run_id: Optional[str] = None,
-        random_seed: Optional[int] = 42
+        random_seed: Optional[int] = 42,
+        sleeper: Optional[Any] = None
     ) -> list[PipelineResult]:
         """
         Run all 15 benchmark questions through a specific retrieval setting (for Table 3).
@@ -512,35 +547,43 @@ class TrafficGenerator:
         effective_run_id = run_id or "default_run"
         print(f"\n[TrafficGenerator] Evaluating Pure Retrieval-Quality Benchmark on {setting_key} (Source={source}, run_id={effective_run_id})...")
 
+        eff_sleeper = sleeper
         # Isolate and reset simulator state for each setting so A does not contaminate B or C
         if source in ("stand-in", "standin"):
-            self.pipeline.router.stand_in_client.reset_quota_state()
-            self.pipeline.router.stand_in_client.rpm_limit = 1000  # Avoid artificial rate-limit backoffs in pure quality benchmark
+            client = self.pipeline.router.stand_in_client
             if random_seed is not None:
-                self.pipeline.router.stand_in_client.set_seed(random_seed)
+                client.set_seed(random_seed)
+            if eff_sleeper is None and getattr(client, "fast_mode", False):
+                eff_sleeper = lambda _: None
+            ctx = client.isolated_context(rpm_limit=1000)
+        else:
+            from contextlib import nullcontext
+            ctx = nullcontext()
 
-        results = []
-        for bq in BENCHMARK_QUESTIONS:
-            req_id = f"eval_{setting_key}_{bq.id}"
-            res = self.pipeline.run_request(
-                query=bq.question,
-                request_id=req_id,
-                scenario=f"eval_{setting_key}",
-                source=source,
-                retrieval_setting=setting_key,
-                expected_negative=bq.expected_negative,
-                run_id=effective_run_id,
-                question_id=bq.id,
-                ground_truth_key_facts=bq.ground_truth_key_facts,
-                queue_wait_ms=0.0,
-                queue_depth=0,
-                concurrency=1,
-                allow_degradation=False
-            )
-            # Guarantee no silent setting change during pure retrieval benchmark
-            assert res.retrieval_setting == setting_key, (
-                f"Quality benchmark setting mutated unexpectedly: requested {setting_key}, got {res.retrieval_setting}"
-            )
-            self.logger.log_result(res)
-            results.append(res)
-        return results
+        with ctx:
+            results = []
+            for bq in BENCHMARK_QUESTIONS:
+                req_id = f"eval_{setting_key}_{bq.id}"
+                res = self.pipeline.run_request(
+                    query=bq.question,
+                    request_id=req_id,
+                    scenario=f"eval_{setting_key}",
+                    source=source,
+                    retrieval_setting=setting_key,
+                    expected_negative=bq.expected_negative,
+                    run_id=effective_run_id,
+                    question_id=bq.id,
+                    ground_truth_key_facts=bq.ground_truth_key_facts,
+                    queue_wait_ms=0.0,
+                    queue_depth=0,
+                    concurrency=1,
+                    sleeper=eff_sleeper,
+                    allow_degradation=False
+                )
+                # Guarantee no silent setting change during pure retrieval benchmark
+                assert res.retrieval_setting == setting_key, (
+                    f"Quality benchmark setting mutated unexpectedly: requested {setting_key}, got {res.retrieval_setting}"
+                )
+                self.logger.log_result(res)
+                results.append(res)
+            return results

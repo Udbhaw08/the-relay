@@ -16,7 +16,8 @@ from the_relay.pipeline.resilience import (
     compute_backoff,
     format_daily_exhaustion_message,
     is_retryable_error,
-    parse_retry_after
+    parse_retry_after,
+    LocalQuotaLimiter
 )
 from the_relay.eval.grader import CitationVerifier, FactualGrader, is_explicit_refusal
 
@@ -55,7 +56,13 @@ class PipelineResult(BaseModel):
     processing_ms: Optional[float] = None
     total_wall_ms: Optional[float] = None
     queue_depth: Optional[int] = None
+    admission_queue_depth: Optional[int] = None
     concurrency: Optional[int] = None
+    scheduled_offset_s: Optional[float] = None
+    dispatch_offset_s: Optional[float] = None
+    dispatch_lateness_ms: Optional[float] = None
+    queue_arrival_time: Optional[float] = None
+    processing_start_time: Optional[float] = None
     timestamps: dict[str, float] = Field(default_factory=dict)
 
 class StreamResultIterator:
@@ -83,10 +90,12 @@ class RelayPipeline:
         retrieval_engine: Optional[RetrievalEngine] = None,
         router: Optional[ModelRouter] = None,
         citation_verifier: Optional[CitationVerifier] = None,
-        factual_grader: Optional[FactualGrader] = None
+        factual_grader: Optional[FactualGrader] = None,
+        limiter: Optional[LocalQuotaLimiter] = None
     ):
         self.retrieval_engine = retrieval_engine or RetrievalEngine()
-        self.router = router or ModelRouter()
+        self.limiter = limiter if limiter is not None else (router.limiter if (router and hasattr(router, "limiter")) else LocalQuotaLimiter())
+        self.router = router or ModelRouter(limiter=self.limiter)
         self.citation_verifier = citation_verifier or CitationVerifier()
         self.factual_grader = factual_grader or FactualGrader(verifier=self.citation_verifier)
 
@@ -322,9 +331,10 @@ class RelayPipeline:
                     timestamps["completion_perf"] = t_req_end
 
                     reset_sec = parse_retry_after(resp.rate_limit_headers.get("retry-after"))
+                    err_lower = (resp.error_message or "").lower()
                     final_text = (
                         format_daily_exhaustion_message(reset_seconds=reset_sec)
-                        if "daily budget" in (resp.error_message or "").lower()
+                        if (("daily" in err_lower and "budget" in err_lower) or "daily limit" in err_lower or "rpd limit" in err_lower)
                         else f"Service unavailable: {resp.error_message}"
                     )
                     error_grade_res = self.factual_grader.grade_answer(
@@ -626,9 +636,10 @@ class RelayPipeline:
                     timestamps["completion_perf"] = t_req_end
 
                     reset_sec = parse_retry_after(resp.rate_limit_headers.get("retry-after"))
+                    err_lower = (resp.error_message or "").lower()
                     final_text = (
                         format_daily_exhaustion_message(reset_seconds=reset_sec)
-                        if "daily budget" in (resp.error_message or "").lower()
+                        if (("daily" in err_lower and "budget" in err_lower) or "daily limit" in err_lower or "rpd limit" in err_lower)
                         else f"Service unavailable: {resp.error_message}"
                     )
                     error_grade_res = self.factual_grader.grade_answer(

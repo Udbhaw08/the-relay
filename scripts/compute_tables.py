@@ -40,7 +40,7 @@ def format_latencies_2(p50: Optional[float], p95: Optional[float]) -> str:
     return f"{p50:.1f} / {p95:.1f} ms"
 
 def generate_table_1() -> str:
-    """Generate Table 1: Limits found in real service (GroqCloud Free Tier for openai/gpt-oss-20b)."""
+    """Generate Table 1: Published Groq Free-plan limits (documentation; not observed on the key owner's account)."""
     rows = [
         ("Requests per minute", "30 RPM (published Free plan)", "Official Groq Documentation (openai/gpt-oss-20b published tier)", "high"),
         ("Tokens per minute", "8,000 TPM (published Free plan)", "Official Groq Documentation & x-ratelimit-limit-tokens header", "high"),
@@ -52,7 +52,7 @@ def generate_table_1() -> str:
     ]
     
     md = [
-        "### Table 1: Limits you found in the real service\n",
+        "### Table 1: Published Groq Free-plan limits (documentation; not observed on the key owner's account)\n",
         "| Limit | Value you found | How you found it | Confidence (high, medium, low) |",
         "| :--- | :--- | :--- | :--- |"
     ]
@@ -72,7 +72,7 @@ def generate_table_2a_and_2b(df: pd.DataFrame, run_id: Optional[str] = None) -> 
 
     t2a_lines = [
         "### Table 2a: Latency, one row per load scenario\n",
-        "| Scenario | Real or stand-in | Requests sent | Duration (s) | Offered rate (per min) | First token p50 / p95 / p99 (ms) | Total time p50 / p95 / p99 (ms) |",
+        "| Scenario | Real or stand-in | Requests sent | Duration (s) | Offered rate (per min) | First token (Simulated TTFT) p50 / p95 / p99 (ms) | Total time p50 / p95 / p99 (ms) |",
         "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
     ]
 
@@ -97,8 +97,29 @@ def generate_table_2a_and_2b(df: pd.DataFrame, run_id: Optional[str] = None) -> 
         # Duration & Offered rate
         min_start = sub["start_time"].min()
         max_start = sub["start_time"].max()
-        duration_s = max(1.0, round(max_start - min_start + (sub["total_ms"].max() / 1000.0), 1))
-        offered_rate = round((reqs_sent / duration_s) * 60.0, 1)
+        dispatch_window_s = max(0.0, round(max_start - min_start, 2))
+        max_end = (sub["start_time"] + (sub["total_ms"] / 1000.0)).max()
+        completion_s = max(0.1, round(max_end - min_start, 1))
+
+        if dispatch_window_s > 0 and abs(completion_s - dispatch_window_s) >= 0.2:
+            duration_str = f"{completion_s}s ({dispatch_window_s}s dispatch)"
+        else:
+            duration_str = f"{completion_s}s"
+
+        if sc == "burst":
+            offered_rate_str = f"Burst ({reqs_sent} concurrent)"
+        elif sc == "steady":
+            if reqs_sent > 1 and dispatch_window_s > 0:
+                measured_interval = dispatch_window_s / (reqs_sent - 1)
+                rate = round(60.0 / measured_interval, 1)
+                offered_rate_str = f"{rate} (interval {measured_interval:.2f}s)"
+            else:
+                offered_rate_str = "60.0 (interval 1.00s)"
+        else:
+            if dispatch_window_s > 0:
+                offered_rate_str = str(round((reqs_sent / dispatch_window_s) * 60.0, 1))
+            else:
+                offered_rate_str = str(round((reqs_sent / completion_s) * 60.0, 1))
 
         # TTFT: only measured on requests with successful output tokens
         ok_subset = sub[(sub["status"] == "ok") & (sub["tokens_out"] > 0)]
@@ -110,7 +131,7 @@ def generate_table_2a_and_2b(df: pd.DataFrame, run_id: Optional[str] = None) -> 
         tot_str = format_latencies_3(tot_p50, tot_p95, tot_p99)
 
         t2a_lines.append(
-            f"| {sc} | {source} | {reqs_sent} | {duration_s}s | {offered_rate} | "
+            f"| {sc} | {source} | {reqs_sent} | {duration_str} | {offered_rate_str} | "
             f"{ttft_str} | {tot_str} |"
         )
 
@@ -121,8 +142,11 @@ def generate_table_2a_and_2b(df: pd.DataFrame, run_id: Optional[str] = None) -> 
         
         avg_retries = round(float(sub["retries"].mean()), 2)
 
-        # Peak queue: accurately measured from queue telemetry when present, otherwise labelled not measured
-        if "queue_depth" in sub.columns and sub["queue_depth"].dropna().count() > 0:
+        # Peak queue: accurately measured from queue telemetry when present
+        if "admission_queue_depth" in sub.columns and sub["admission_queue_depth"].dropna().count() > 0:
+            qd = pd.to_numeric(sub["admission_queue_depth"], errors="coerce").dropna()
+            peak_queue = str(int(qd.max())) if len(qd) > 0 else "N/A"
+        elif "queue_depth" in sub.columns and sub["queue_depth"].dropna().count() > 0:
             qd = pd.to_numeric(sub["queue_depth"], errors="coerce").dropna()
             peak_queue = str(int(qd.max())) if len(qd) > 0 else "N/A"
         elif "peak_queue" in sub.columns and sub["peak_queue"].dropna().count() > 0:
@@ -161,7 +185,7 @@ def generate_table_3(df: pd.DataFrame, run_id: Optional[str] = None) -> str:
 
     t3_lines = [
         "### Table 3: Retrieval settings (at least three)\n",
-        "| Setting (piece size, pieces fetched, re-rank yes or no) | Questions asked | Correct and cited % | Wrong % | Correctly refused % | Tokens per answer | First token p50 / p95 (ms) | Total time p50 / p95 (ms) |",
+        "| Setting (piece size, pieces fetched, re-rank yes or no) | Questions asked | Correct and cited % | Wrong % | Correctly refused % | Tokens per answer | First token (Simulated TTFT) p50 / p95 (ms) | Total time p50 / p95 (ms) |",
         "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
     ]
 

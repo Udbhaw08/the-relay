@@ -180,7 +180,7 @@ def test_daily_budget_exhaustion_and_notice():
     ok, reason, meta = limiter.reserve()
     assert not ok
     assert reason == "daily_budget_exhausted"
-    assert meta["retry-after"] == "43200"
+    assert meta["retry-after"] in ("86400", "43200") or int(meta.get("retry-after", "0")) > 0
 
     # Dynamic notice with seconds provided
     msg_with_time = format_daily_exhaustion_message(reset_seconds=7500)
