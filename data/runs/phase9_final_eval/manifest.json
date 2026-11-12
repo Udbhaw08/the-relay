@@ -1,0 +1,73 @@
+{
+  "run_id": "phase9_final_eval",
+  "created_at": "2026-11-12T18:47:27.853663+00:00",
+  "git_commit": "e60f46071e90277d5fd3e34b3bc6de0e845ec0f4",
+  "random_seed": 42,
+  "offline_only": true,
+  "configured_llm_provider": "groq",
+  "configured_groq_model": "openai/gpt-oss-20b",
+  "retrieval_settings": {
+    "setting_a": {
+      "piece_size": 250,
+      "pieces_fetched": 3,
+      "rerank": false,
+      "mode": "bm25_only",
+      "description": "Small chunks, top-3, BM25-only, no re-ranking (fast, low cost)"
+    },
+    "setting_b": {
+      "piece_size": 500,
+      "pieces_fetched": 5,
+      "rerank": true,
+      "mode": "hybrid",
+      "description": "Medium chunks, top-5, true hybrid (BM25 + Dense + RRF)"
+    },
+    "setting_c": {
+      "piece_size": 1000,
+      "pieces_fetched": 7,
+      "rerank": true,
+      "mode": "hybrid",
+      "description": "Large chunks, top-7, deep hybrid (BM25 + Dense + RRF)"
+    }
+  },
+  "benchmark_questions_count": 15,
+  "benchmark_question_ids": [
+    "q01_attention_formula",
+    "q02_transformer_dimensions",
+    "q03_transformer_bleu",
+    "q04_ffn_layer",
+    "q05_mimi_codec_framerate",
+    "q06_moshi_latency_budget",
+    "q07_moshi_multistream",
+    "q08_moshi_pretraining_data",
+    "q09_dynamic_chunking_concept",
+    "q10_hnet_hierarchy_stages",
+    "q11_dna_data_efficiency",
+    "q12_character_robustness",
+    "q13_llama3_hardware_infra",
+    "q14_private_dna_cohorts",
+    "q15_quantum_attention_speedup"
+  ],
+  "output_csv": "C:\\Users\\udbha\\Desktop\\aivoice\\data\\runs\\phase9_final_eval\\results.csv",
+  "duration_seconds": 514.9,
+  "burst_accounting": {
+    "offered_count": 20,
+    "submitted_count": 20,
+    "accepted_count": 20,
+    "rejected_count": 0,
+    "successful_count": 2,
+    "failed_count": 18,
+    "peak_queue_depth": 20,
+    "max_concurrency": 10
+  },
+  "sustained_stats": {
+    "offered_count": 25,
+    "submitted_count": 20,
+    "accepted_count": 20,
+    "rejected_count": 5,
+    "successful_count": 3,
+    "failed_count": 17,
+    "peak_queue_depth": 15,
+    "max_concurrency": 5
+  },
+  "completed_at": "2026-11-12T18:56:02.765273+00:00"
+}

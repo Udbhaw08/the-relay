@@ -45,15 +45,16 @@ class ConcurrencyTracker:
                 self._peak_queue_depth = self._queue_depth
             return True, time.perf_counter()
 
-    def start_task(self, submit_time: float) -> tuple[float, int, int]:
+    def start_task(self, submit_time: Any) -> tuple[float, int, int]:
         """Record task admission into active execution."""
+        ts = submit_time[1] if isinstance(submit_time, tuple) else float(submit_time)
         with self._lock:
             self.accepted_count += 1
             self._queue_depth = max(0, self._queue_depth - 1)
             self._in_flight += 1
             if self._in_flight > self._max_concurrency:
                 self._max_concurrency = self._in_flight
-            wait_ms = max(0.0, (time.perf_counter() - submit_time) * 1000.0)
+            wait_ms = max(0.0, (time.perf_counter() - ts) * 1000.0)
             return wait_ms, self._queue_depth, self._in_flight
 
     def finish_task(self, status: str = "ok"):

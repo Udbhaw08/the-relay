@@ -15,7 +15,8 @@ load_dotenv(ROOT_DIR / ".env")
 
 # Provider settings - GroqCloud API is the ONLY real LLM provider
 # Stand-in is kept exclusively for explicitly selected offline tests (LLM_PROVIDER=standin)
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", os.getenv("PRIMARY_PROVIDER", "groq")).lower()
+raw_provider = os.getenv("LLM_PROVIDER", "groq").lower()
+LLM_PROVIDER = "groq" if raw_provider not in ("stand-in", "standin") else "standin"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 # Default verified production model for GroqCloud (llama-3.3-70b-versatile decommissioned August 16, 2026)
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")

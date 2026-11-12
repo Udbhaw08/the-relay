@@ -166,8 +166,8 @@ def test_queue_depth_distinct_from_in_flight():
 
     # ConcurrencyTracker helper
     tracker = ConcurrencyTracker()
-    t_sub1 = tracker.submit_task()
-    t_sub2 = tracker.submit_task()
+    adm1, t_sub1 = tracker.submit_task()
+    adm2, t_sub2 = tracker.submit_task()
     assert tracker._queue_depth == 2
 
     wait1, q_rem1, inflight1 = tracker.start_task(t_sub1)

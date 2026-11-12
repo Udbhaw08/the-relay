@@ -74,13 +74,18 @@ def update_run_manifest(manifest_path: Path, extra_data: dict):
 def main():
     parser = argparse.ArgumentParser(description="Run complete or isolated benchmark suite.")
     parser.add_argument("--run-id", type=str, default=None, help="Identifier for this benchmark run.")
-    parser.add_argument("--csv", type=str, default=str(RESULTS_PATH), help="Target CSV file for results.")
+    parser.add_argument("--csv", type=str, default=None, help="Target CSV file for results (defaults to data/runs/<run_id>/results.csv).")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for deterministic stand-in simulation.")
     parser.add_argument("--offline-only", action="store_true", default=True, help="Run exclusively offline without live provider calls.")
     args = parser.parse_args()
 
     run_id = args.run_id or f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-    target_csv = Path(args.csv)
+    if args.csv:
+        target_csv = Path(args.csv)
+    else:
+        run_dir = ROOT_DIR / "data" / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        target_csv = run_dir / "results.csv"
     t_start = time.perf_counter()
 
     print("=" * 80)
