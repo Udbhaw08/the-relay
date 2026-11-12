@@ -52,7 +52,7 @@ st.sidebar.markdown("### ⚙️ Pipeline Controls")
 source_choice = st.sidebar.radio(
     "Model Source:",
     ["real", "stand-in"],
-    format_func=lambda x: "🟢 Live Model (GroqCloud - openai/gpt-oss-20b)" if x == "real" else "🟡 Calibrated Stand-in Simulator",
+    format_func=lambda x: "🟢 Groq model configured — live access unverified (openai/gpt-oss-20b)" if x == "real" else "🟡 Calibrated Stand-in Simulator",
     index=0
 )
 
@@ -146,7 +146,7 @@ with tabs[0]:
             st.markdown(f"""
             <div class="step-box">
                 <b>Step 2: Retrieval Tool</b><br>
-                <small>Hybrid BM25 + Dense ({res.retrieval_setting})</small>
+                <small>BM25 + Lexical Boosts ({res.retrieval_setting}; dense planned in Phase 4)</small>
             </div>
             """, unsafe_allow_html=True)
             st.caption("✅ Chunks Retrieved")
@@ -221,7 +221,7 @@ with tabs[2]:
     st.image("docs/architecture_diagram.png", use_container_width=True)
     st.markdown("""
     - **Query Parser**: Categorizes domain intent and identifies candidate paper anchors.
-    - **Retrieval Engine**: Employs BM25 with dense re-ranking and adaptive degradation under rate-limit warnings.
+    - **Retrieval Engine**: Employs BM25 with lexical/metadata re-ranking (dense semantic retrieval planned in Phase 4) and adaptive degradation under rate-limit warnings.
     - **Synthesis Drafter**: Enforces strict grounding with `[Paper, Page, Section]` citations.
     - **Verification Guard**: Employs automated loop-back query reformulation if citations are unverified.
     - **Calibrated Stand-In**: Replicates real TTFT, queueing latency degradation, and 429 backoff throttling.
@@ -238,8 +238,8 @@ with tabs[3]:
     
     with col_l1:
         st.markdown("#### 1. Steady Load")
-        st.caption("Paced requests within free tier limits (~14 RPM).")
-        if st.button("Run Steady Test (Real Model)"):
+        st.caption("Paced requests within free tier limits (~14 RPM). Requires confirmed owner authorization & Free plan.")
+        if st.button("Run Steady Test (Groq Live - Requires Authorization)"):
             with st.spinner("Pacing 3 live requests to Groq free tier..."):
                 for i in range(3):
                     pipeline.run_request(

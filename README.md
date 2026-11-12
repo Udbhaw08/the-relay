@@ -1,6 +1,6 @@
 # The Relay: Resilient Research Paper Assistant
 
-[![Tests](https://img.shields.io/badge/pytest-11%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/pytest-31%20passed-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-green.svg)]()
 
@@ -22,7 +22,7 @@ The assistant strictly answers from these three arXiv papers (fetched at exact s
 
 - **4-Step Decoupled Pipeline:**
   1. *Query Parser & Decomposer*
-  2. *Passage Retrieval Tool* (Hybrid BM25 + Dense Semantic Scoring)
+  2. *Passage Retrieval Tool* (BM25 with Lexical & Metadata Boosts; Dense Semantic Scoring planned in Phase 4)
   3. *Synthesis & Citation Drafter* (Explicit section & page citations; strict refusal on missing evidence)
   4. *Citation Verification & Guard* (Automated feedback loop and query expansion)
 - **GroqCloud Provider & Offline Simulator:**
@@ -53,7 +53,7 @@ Fill in your Groq API key (`GROQ_API_KEY=...` and optionally `GROQ_MODEL=...`). 
 ```bash
 pytest -v
 ```
-*(All 11 unit tests pass verifying ingestion, retrieval, stand-in rate limiting, 4-step pipeline, and unanswerable question refusals).*
+*(All 31 unit tests pass verifying ingestion, retrieval, stand-in rate limiting, 4-step pipeline, and unanswerable question refusals).*
 
 ### 4. Execute Full Benchmark Suite
 ```bash
