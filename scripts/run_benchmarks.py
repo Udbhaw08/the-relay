@@ -8,7 +8,7 @@ import time
 import argparse
 import subprocess
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Add root directory to path
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -42,7 +42,7 @@ def save_run_manifest(run_id: str, seed: int, csv_path: Path, offline_only: bool
 
     manifest_data = {
         "run_id": run_id,
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "git_commit": get_git_commit_sha(),
         "random_seed": seed,
         "offline_only": offline_only,
@@ -59,6 +59,18 @@ def save_run_manifest(run_id: str, seed: int, csv_path: Path, offline_only: bool
 
     return manifest_file
 
+def update_run_manifest(manifest_path: Path, extra_data: dict):
+    """Update manifest with completion timestamps and scenario metrics."""
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data.update(extra_data)
+        data["completed_at"] = datetime.now(timezone.utc).isoformat()
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"[Manifest] Warning: could not update manifest: {e}")
+
 def main():
     parser = argparse.ArgumentParser(description="Run complete or isolated benchmark suite.")
     parser.add_argument("--run-id", type=str, default=None, help="Identifier for this benchmark run.")
@@ -67,8 +79,9 @@ def main():
     parser.add_argument("--offline-only", action="store_true", default=True, help="Run exclusively offline without live provider calls.")
     args = parser.parse_args()
 
-    run_id = args.run_id or f"run_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+    run_id = args.run_id or f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     target_csv = Path(args.csv)
+    t_start = time.perf_counter()
 
     print("=" * 80)
     print(f"THE RELAY: EXECUTING BENCHMARKS & LOAD SCENARIOS [Run ID: {run_id}]")
@@ -114,8 +127,20 @@ def main():
     print("\n>>> Phase F: Daily Budget Exhausted Scenario (Stand-In Simulator)")
     generator.run_scenario_daily_budget_exhausted(num_requests=10, source="stand-in", run_id=run_id)
 
+    t_end = time.perf_counter()
+    duration_sec = round(t_end - t_start, 2)
+
+    update_run_manifest(
+        manifest_path=manifest_path,
+        extra_data={
+            "duration_seconds": duration_sec,
+            "burst_accounting": generator.last_burst_stats,
+            "sustained_stats": generator.last_sustained_stats
+        }
+    )
+
     print("\n" + "=" * 80)
-    print(f"BENCHMARK RUN '{run_id}' COMPLETED. COMPUTING SUMMARY TABLES...")
+    print(f"BENCHMARK RUN '{run_id}' COMPLETED (Duration: {duration_sec}s). COMPUTING SUMMARY TABLES...")
     print("=" * 80 + "\n")
 
     df = pd.read_csv(target_csv)
