@@ -52,7 +52,7 @@ st.sidebar.markdown("### ⚙️ Pipeline Controls")
 source_choice = st.sidebar.radio(
     "Model Source:",
     ["real", "stand-in"],
-    format_func=lambda x: "🟢 Live Model (Gemini 2.5 Flash)" if x == "real" else "🟡 Calibrated Stand-in Simulator",
+    format_func=lambda x: "🟢 Live Model (GroqCloud - openai/gpt-oss-20b)" if x == "real" else "🟡 Calibrated Stand-in Simulator",
     index=0
 )
 
@@ -240,7 +240,7 @@ with tabs[3]:
         st.markdown("#### 1. Steady Load")
         st.caption("Paced requests within free tier limits (~14 RPM).")
         if st.button("Run Steady Test (Real Model)"):
-            with st.spinner("Pacing 3 live requests to Gemini free tier..."):
+            with st.spinner("Pacing 3 live requests to Groq free tier..."):
                 for i in range(3):
                     pipeline.run_request(
                         query="Explain self-attention.",
@@ -270,3 +270,4 @@ with tabs[3]:
             res_ex = pipeline.run_request("What is H-Net?", "exhaust_test", "daily_budget_exhausted", "stand-in")
             st.error(f"Returned Status: {res_ex.status.upper()}")
             st.info(f"User Message: {res_ex.answer}")
+

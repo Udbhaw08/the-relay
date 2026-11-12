@@ -1,21 +1,30 @@
-"""Router providing unified access to Real LLM clients and the Calibrated Stand-In."""
+"""Router providing unified access to GroqCloud API and the Calibrated Stand-In."""
 from typing import Optional
-from the_relay.models.base import BaseModelClient, ModelResponse
-from the_relay.models.gemini_client import GeminiClient
+from the_relay.models.base import BaseModelClient
+from the_relay.models.groq_client import GroqClient
 from the_relay.models.stand_in import StandInModelClient
-from the_relay.config import PRIMARY_PROVIDER
+from the_relay.config import LLM_PROVIDER
 
 class ModelRouter:
-    def __init__(self, primary_provider: str = PRIMARY_PROVIDER):
-        self.primary_provider = primary_provider
-        self._real_client: Optional[BaseModelClient] = None
+    """
+    Router directing traffic to either the Groq client (the only real provider)
+    or the stand-in simulator (only for explicitly selected offline tests).
+    """
+    def __init__(self, provider: Optional[str] = None):
+        self.provider = (provider or LLM_PROVIDER).lower()
+        self._groq_client: Optional[GroqClient] = None
         self._stand_in_client: Optional[StandInModelClient] = None
 
     @property
+    def groq_client(self) -> GroqClient:
+        if self._groq_client is None:
+            self._groq_client = GroqClient()
+        return self._groq_client
+
+    @property
     def real_client(self) -> BaseModelClient:
-        if self._real_client is None:
-            self._real_client = GeminiClient()
-        return self._real_client
+        """Alias for backward compatibility - returns the sole real provider (Groq)."""
+        return self.groq_client
 
     @property
     def stand_in_client(self) -> StandInModelClient:
@@ -23,9 +32,21 @@ class ModelRouter:
             self._stand_in_client = StandInModelClient()
         return self._stand_in_client
 
-    def get_client(self, source: str = "real") -> BaseModelClient:
-        """Return the appropriate client based on the source flag ('real' or 'stand-in')."""
-        if source in ("real", "live"):
-            return self.real_client
-        return self.stand_in_client
+    def get_client(self, source: Optional[str] = None) -> BaseModelClient:
+        """
+        Return the appropriate client based on the requested source.
+        - 'groq', 'real', 'live' -> GroqClient (the ONLY real LLM provider)
+        - 'stand-in', 'standin' -> StandInModelClient (strictly for offline tests)
+        - If source is None:
+            - If LLM_PROVIDER is 'standin' or 'stand-in', returns stand-in client.
+            - Otherwise returns GroqClient.
+        """
+        # If router is explicitly in standin mode and source is not explicitly forcing real/groq:
+        if self.provider in ("standin", "stand-in") and source not in ("real", "live", "groq"):
+            return self.stand_in_client
 
+        if source in ("stand-in", "standin"):
+            return self.stand_in_client
+
+        # Default to Groq as the sole real provider
+        return self.groq_client

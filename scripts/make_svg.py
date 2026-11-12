@@ -133,14 +133,14 @@ SVG_CONTENT = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1080" 
     <text x="0" y="4" fill="#f8fafc" font-size="10" font-weight="600" text-anchor="middle">Source Selector</text>
   </g>
 
-  <!-- Left: Real Mode -> Groq / Gemini Client -->
+  <!-- Left: Real Mode -> Groq API Client -->
   <path d="M 405 680 L 340 680 L 340 735" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
   <rect x="305" y="695" width="60" height="16" rx="3" fill="#1e293b"/>
   <text x="335" y="707" fill="#cbd5e1" font-size="9" text-anchor="middle">Real Mode</text>
 
   <g transform="translate(340, 755)">
     <rect x="-65" y="-16" width="130" height="32" rx="6" fill="#0f172a" stroke="#06b6d4" stroke-width="1.5"/>
-    <text x="0" y="4" fill="#e0f2fe" font-size="10" font-weight="500" text-anchor="middle">Groq / Gemini API Client</text>
+    <text x="0" y="4" fill="#e0f2fe" font-size="10" font-weight="500" text-anchor="middle">Groq API Client</text>
   </g>
 
   <!-- Right: Stand-in Mode -> Calibrated Stand-in -->
@@ -185,3 +185,4 @@ SVG_CONTENT = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1080" 
 
 Path("docs/architecture_diagram.svg").write_text(SVG_CONTENT, encoding="utf-8")
 print("Saved docs/architecture_diagram.svg")
+

@@ -1,5 +1,5 @@
 # The Relay: Resilient Research Paper Assistant
-**Author:** Udbhaw Kumar  
+**Author:** Udbhaw Anand  
 **Repository:** [https://github.com/Udbhaw08/the-relay](https://github.com/Udbhaw08/the-relay)  
 **Deliverable File:** `results.csv` (125 evaluated requests)
 

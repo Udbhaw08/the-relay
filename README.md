@@ -25,10 +25,9 @@ The assistant strictly answers from these three arXiv papers (fetched at exact s
   2. *Passage Retrieval Tool* (Hybrid BM25 + Dense Semantic Scoring)
   3. *Synthesis & Citation Drafter* (Explicit section & page citations; strict refusal on missing evidence)
   4. *Citation Verification & Guard* (Automated feedback loop and query expansion)
-- **Multi-Provider Resilience Layer:**
-  - Primary: Gemini 2.5 Flash API client
-  - Fallback: NVIDIA NIM (Llama-3.3-70B)
-  - Stand-in Simulator: Calibrated to match real TTFT, queueing concurrency degradation, and token-bucket 429 throttling.
+- **GroqCloud Provider & Offline Simulator:**
+  - Real Provider: GroqCloud API (Groq Free tier, e.g. `openai/gpt-oss-20b` via `https://api.groq.com/openai/v1`)
+  - Stand-in Simulator: Calibrated offline simulator strictly for offline tests (`LLM_PROVIDER=standin`).
 - **Adaptive Retrieval Degradation:**
   - Automatically downscales retrieval context (Setting B $\to$ Setting A) when upstream rate limits or 429 retries occur, cutting token burn by 70%.
 
@@ -48,7 +47,7 @@ Create a `.env` file from the example:
 ```bash
 cp .env.example .env
 ```
-Fill in your API key (`GEMINI_API_KEY=...` or `NVIDIA_API_KEY=...`).
+Fill in your Groq API key (`GROQ_API_KEY=...` and optionally `GROQ_MODEL=...`). Note: Free tier only; do not configure paid tiers.
 
 ### 3. Run Automated Tests
 ```bash

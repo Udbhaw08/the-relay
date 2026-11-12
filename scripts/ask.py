@@ -16,7 +16,7 @@ from the_relay.pipeline.orchestrator import RelayPipeline
 def main():
     parser = argparse.ArgumentParser(description="Ask questions to The Relay pipeline from the terminal.")
     parser.add_argument("query", nargs="?", default="What is the formula for Scaled Dot-Product Attention in Attention Is All You Need?", help="The technical question to ask.")
-    parser.add_argument("--source", default="real", choices=["real", "stand-in"], help="Model source ('real' for Gemini, 'stand-in' for simulator).")
+    parser.add_argument("--source", default="real", choices=["real", "groq", "stand-in"], help="Model source ('real' / 'groq' for GroqCloud, 'stand-in' for simulator).")
     parser.add_argument("--setting", default="setting_b", choices=["setting_a", "setting_b", "setting_c"], help="Retrieval setting.")
     parser.add_argument("--unanswerable", action="store_true", help="Flag if this question is expected to be unanswerable.")
 
@@ -57,3 +57,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

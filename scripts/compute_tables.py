@@ -24,15 +24,15 @@ def compute_percentiles(series: pd.Series) -> tuple[float, float, float]:
     return round(p50, 1), round(p95, 1), round(p99, 1)
 
 def generate_table_1() -> str:
-    """Generate Table 1: Limits found in real service."""
+    """Generate Table 1: Limits found in real service (GroqCloud Free Tier)."""
     rows = [
-        ("Requests per minute", "15 RPM", "Google AI Studio Documentation & 429 probe", "high"),
-        ("Tokens per minute", "1,000,000 TPM", "Official Gemini Free Tier Documentation", "high"),
-        ("Requests per day", "1,500 RPD", "Gemini 2.5/3.8 Flash Free Tier Specs", "high"),
+        ("Requests per minute", "Model-dependent (e.g. 30 RPM)", "Groq Cloud Console & x-ratelimit-limit-requests header", "high"),
+        ("Tokens per minute", "Model-dependent (e.g. 6,000-30,000 TPM)", "Groq Free Tier Specs & x-ratelimit-limit-tokens header", "high"),
+        ("Requests per day", "Organization-dependent (e.g. 14,400 RPD)", "Groq Cloud Free Tier Organization Documentation", "high"),
         ("Tokens per day", "not measured", "Provider documentation unstated (governed by TPM/RPD)", "medium"),
-        ("Requests in flight at once", "5", "Concurrent probe testing before latency degradation", "medium"),
-        ("What it returns when a limit is hit", "HTTP 429 RESOURCE_EXHAUSTED", "Live probe payload inspection", "high"),
-        ("Time until it recovers", "4.0s - 60.0s", "Observed recovery window via exponential backoff", "high"),
+        ("Requests in flight at once", "Dynamic / 1-5 concurrent", "Groq Cloud documentation and probe latency monitoring", "medium"),
+        ("What it returns when a limit is hit", "HTTP 429 rate_limit_exceeded", "Live API error payload and header inspection", "high"),
+        ("Time until it recovers", "Dynamic via 'retry-after' header", "x-ratelimit-reset-requests / retry-after header", "high"),
     ]
     
     md = [
