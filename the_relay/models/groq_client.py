@@ -167,7 +167,7 @@ class GroqClient(BaseModelClient):
 
             return ModelResponse(
                 text=content,
-                first_token_ms=round(total_ms, 1),
+                first_token_ms=None,  # True TTFT requires streaming; non-streaming receives full payload at once
                 total_ms=round(total_ms, 1),
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,

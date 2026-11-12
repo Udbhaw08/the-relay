@@ -130,14 +130,14 @@ def test_error_classifier():
 # 4. Rolling-window RPM enforcement and expiry
 def test_local_quota_rpm_rolling_window():
     current_time = 1000.0
-    limiter = LocalQuotaLimiter(rpm_limit=3, tpm_limit=100000, clock_fn=lambda: current_time)
+    limiter = LocalQuotaLimiter(rpm_limit=3, rpd_limit=1000, tpm_limit=100000, clock_fn=lambda: current_time)
 
     # First 3 requests allowed
     ok1, reason1, meta1 = limiter.reserve(estimated_tokens=50, request_id="req1")
     ok2, reason2, meta2 = limiter.reserve(estimated_tokens=50, request_id="req2")
     ok3, reason3, meta3 = limiter.reserve(estimated_tokens=50, request_id="req3")
     assert ok1 and ok2 and ok3
-    assert meta3["x-ratelimit-remaining-requests"] == "0"
+    assert meta3["x-ratelimit-remaining-requests"] == "997"
 
     # 4th request within same minute rejected
     ok4, reason4, meta4 = limiter.reserve(estimated_tokens=50, request_id="req4")

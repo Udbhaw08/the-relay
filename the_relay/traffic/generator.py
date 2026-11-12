@@ -85,55 +85,144 @@ class TrafficGenerator:
         self.logger = logger or ResultsLogger()
         self.last_burst_stats: dict[str, Any] = {}
         self.last_sustained_stats: dict[str, Any] = {}
+        self.last_steady_stats: dict[str, Any] = {}
 
     def run_scenario_steady(
         self,
         num_requests: int = 15,
         source: str = "real",
         run_id: Optional[str] = None,
-        target_interval: Optional[float] = None
+        target_interval: Optional[float] = None,
+        max_concurrency: Optional[int] = None,
+        max_queue: Optional[int] = None
     ) -> list[PipelineResult]:
         """
         Scenario 1: Steady load within free tier limits.
-        Dispatches requests with exact start-to-start inter-arrival scheduling.
-        Default target interval: 4.2s (~14.3 RPM) for real/groq, 1.0s (60 RPM) for stand-in.
+        Dispatches requests with exact monotonic start-to-start inter-arrival scheduling
+        using a bounded concurrent scheduler.
+        Dispatches each request at its intended target time without waiting for prior requests.
+        Respects MAX_CONCURRENT_REQUESTS and MAX_QUEUE_CAPACITY to prevent unbounded backlog.
         """
+        from the_relay.config import MAX_CONCURRENT_REQUESTS, MAX_QUEUE_CAPACITY
         effective_run_id = run_id or "default_run"
         if target_interval is None:
             target_interval = 4.2 if source in ("real", "groq") else 1.0
 
-        print(f"\n[TrafficGenerator] Running Scenario: STEADY (Source={source}, Requests={num_requests}, Interval={target_interval}s, run_id={effective_run_id})...")
-        results = []
+        concurrency_limit = max_concurrency or MAX_CONCURRENT_REQUESTS
+        queue_limit = max_queue or MAX_QUEUE_CAPACITY
+
+        print(f"\n[TrafficGenerator] Running Scenario: STEADY (Source={source}, Requests={num_requests}, Interval={target_interval}s, MaxConcurrency={concurrency_limit}, MaxQueue={queue_limit}, run_id={effective_run_id})...")
+        tracker = ConcurrencyTracker(max_concurrency=concurrency_limit, max_queue=queue_limit)
+        results: list[PipelineResult] = []
+        futures = []
         schedule_start_perf = time.perf_counter()
+        actual_dispatch_times: list[float] = []
+        dispatch_latenesses_ms: list[float] = []
 
-        for i in range(num_requests):
-            # Start-to-start pacing: compute target start time for request i
-            target_start = schedule_start_perf + (i * target_interval)
-            now_perf = time.perf_counter()
-            wait_for_slot = target_start - now_perf
-            if wait_for_slot > 0:
-                time.sleep(wait_for_slot)
+        def _worker(idx: int, admitted: bool, t_submit: float, target_start: float, lateness: float):
+            bq = BENCHMARK_QUESTIONS[idx % len(BENCHMARK_QUESTIONS)]
+            req_id = f"steady_{source}_{idx+1:03d}"
 
-            bq = BENCHMARK_QUESTIONS[i % len(BENCHMARK_QUESTIONS)]
-            req_id = f"steady_{source}_{i+1:03d}"
-            res = self.pipeline.run_request(
-                query=bq.question,
-                request_id=req_id,
-                scenario="steady",
-                source=source,
-                retrieval_setting="setting_b",
-                expected_negative=bq.expected_negative,
-                run_id=effective_run_id,
-                question_id=bq.id,
-                ground_truth_key_facts=bq.ground_truth_key_facts,
-                queue_wait_ms=0.0,
-                queue_depth=0,
-                concurrency=1
-            )
-            self.logger.log_result(res)
-            results.append(res)
-            print(f"  -> [{req_id}] TTFT={res.first_token_ms}ms, Total={res.total_ms}ms, Status={res.status}")
+            if not admitted:
+                # Backpressure rejection if queue limit breached
+                t_now = time.perf_counter()
+                total_ms = max(0.1, round((t_now - t_submit) * 1000.0, 1))
+                res = PipelineResult(
+                    request_id=req_id,
+                    scenario="steady",
+                    source=source,
+                    start_time=time.time(),
+                    first_token_ms=None,
+                    total_ms=total_ms,
+                    status="rate_limited",
+                    retries=0,
+                    tokens_in=0,
+                    tokens_out=0,
+                    is_simulated=(source in ("stand-in", "standin")),
+                    retrieval_setting="setting_b",
+                    degradation_reason="queue_capacity_breached_backpressure",
+                    answer_grade="rate_limited",
+                    answer="Request rejected due to bounded queue capacity backpressure in steady scenario.",
+                    run_id=effective_run_id,
+                    timestamps={
+                        "scheduled_start_perf": target_start,
+                        "actual_dispatch_perf": t_submit,
+                        "dispatch_lateness_ms": lateness
+                    }
+                )
+                self.logger.log_result(res)
+                return res
 
+            wait_ms, q_depth, in_flight = tracker.start_task(t_submit)
+            try:
+                res = self.pipeline.run_request(
+                    query=bq.question,
+                    request_id=req_id,
+                    scenario="steady",
+                    source=source,
+                    retrieval_setting="setting_b",
+                    expected_negative=bq.expected_negative,
+                    run_id=effective_run_id,
+                    question_id=bq.id,
+                    ground_truth_key_facts=bq.ground_truth_key_facts,
+                    queue_wait_ms=round(wait_ms, 1),
+                    queue_depth=q_depth,
+                    concurrency=in_flight
+                )
+                res.timestamps["scheduled_start_perf"] = target_start
+                res.timestamps["actual_dispatch_perf"] = t_submit
+                res.timestamps["dispatch_lateness_ms"] = lateness
+                self.logger.log_result(res)
+                return res
+            finally:
+                tracker.finish_task(res.status if 'res' in locals() else "error")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency_limit) as executor:
+            for i in range(num_requests):
+                target_start = schedule_start_perf + (i * target_interval)
+                now_perf = time.perf_counter()
+                wait_for_slot = target_start - now_perf
+                if wait_for_slot > 0:
+                    time.sleep(wait_for_slot)
+
+                dispatch_perf = time.perf_counter()
+                lateness_ms = max(0.0, (dispatch_perf - target_start) * 1000.0)
+                actual_dispatch_times.append(dispatch_perf)
+                dispatch_latenesses_ms.append(lateness_ms)
+
+                admitted, t_submit = tracker.submit_task()
+                fut = executor.submit(_worker, i, admitted, t_submit, target_start, lateness_ms)
+                futures.append(fut)
+
+            for fut in concurrent.futures.as_completed(futures):
+                try:
+                    res = fut.result()
+                    results.append(res)
+                    print(f"  -> [{res.request_id}] TTFT={res.first_token_ms}ms, Total={res.total_ms}ms, Status={res.status}")
+                except Exception as e:
+                    print(f"  -> Steady worker error: {e}")
+
+        # Sort results deterministically by request_id
+        results.sort(key=lambda r: r.request_id)
+
+        # Calculate inter-arrival intervals
+        intervals = [
+            (actual_dispatch_times[j] - actual_dispatch_times[j - 1])
+            for j in range(1, len(actual_dispatch_times))
+        ] if len(actual_dispatch_times) > 1 else [0.0]
+
+        mean_interval = sum(intervals) / len(intervals) if intervals else 0.0
+        mean_lateness = sum(dispatch_latenesses_ms) / len(dispatch_latenesses_ms) if dispatch_latenesses_ms else 0.0
+
+        self.last_steady_stats = {
+            **tracker.stats(),
+            "target_interval_sec": target_interval,
+            "mean_measured_interval_sec": round(mean_interval, 3),
+            "mean_dispatch_lateness_ms": round(mean_lateness, 2),
+            "min_measured_interval_sec": round(min(intervals), 3) if intervals else 0.0,
+            "max_measured_interval_sec": round(max(intervals), 3) if intervals else 0.0,
+        }
+        print(f"  [Steady Scheduler Stats] MeanInterval={self.last_steady_stats['mean_measured_interval_sec']}s (target={target_interval}s), MeanLateness={self.last_steady_stats['mean_dispatch_lateness_ms']}ms, MaxConcurrency={self.last_steady_stats['max_concurrency']}")
         return results
 
     def run_scenario_burst(
@@ -415,14 +504,18 @@ class TrafficGenerator:
     ) -> list[PipelineResult]:
         """
         Run all 15 benchmark questions through a specific retrieval setting (for Table 3).
-        Guarantees independent experiment context, clean rate limit state, and fixed random seed.
+        Dedicated retrieval-quality benchmark mode:
+        - Guarantees independent experiment context and fixed random seed.
+        - Disables quota-triggered adaptive degradation (allow_degradation=False) so setting never degrades to A.
+        - Isolates quota state so Setting A cannot contaminate B or C.
         """
         effective_run_id = run_id or "default_run"
-        print(f"\n[TrafficGenerator] Evaluating Retrieval Benchmark on {setting_key} (Source={source}, run_id={effective_run_id})...")
+        print(f"\n[TrafficGenerator] Evaluating Pure Retrieval-Quality Benchmark on {setting_key} (Source={source}, run_id={effective_run_id})...")
 
         # Isolate and reset simulator state for each setting so A does not contaminate B or C
         if source in ("stand-in", "standin"):
             self.pipeline.router.stand_in_client.reset_quota_state()
+            self.pipeline.router.stand_in_client.rpm_limit = 1000  # Avoid artificial rate-limit backoffs in pure quality benchmark
             if random_seed is not None:
                 self.pipeline.router.stand_in_client.set_seed(random_seed)
 
@@ -441,7 +534,12 @@ class TrafficGenerator:
                 ground_truth_key_facts=bq.ground_truth_key_facts,
                 queue_wait_ms=0.0,
                 queue_depth=0,
-                concurrency=1
+                concurrency=1,
+                allow_degradation=False
+            )
+            # Guarantee no silent setting change during pure retrieval benchmark
+            assert res.retrieval_setting == setting_key, (
+                f"Quality benchmark setting mutated unexpectedly: requested {setting_key}, got {res.retrieval_setting}"
             )
             self.logger.log_result(res)
             results.append(res)

@@ -26,4 +26,6 @@ def test_stand_in_daily_budget_exhaustion():
     resp = client.generate("Question after 3pm")
     assert resp.status == "rate_limited"
     assert "Daily budget" in resp.error_message
+    assert resp.rate_limit_headers.get("x-ratelimit-limit-requests") == str(client.rpd_limit)
+    assert resp.rate_limit_headers.get("x-ratelimit-remaining-requests") == "0"
 

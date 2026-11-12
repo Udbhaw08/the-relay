@@ -347,12 +347,14 @@ class LocalQuotaLimiter:
             self._daily_request_count += 1
             self._daily_token_count += estimated_tokens
 
-            rem_req = max(0, self.rpm_limit - len(self._request_timestamps))
+            rem_daily_req = max(0, self.rpd_limit - self._daily_request_count)
             rem_tok = max(0, self.tpm_limit - (current_minute_tokens + estimated_tokens))
 
             return True, None, {
-                "x-ratelimit-remaining-requests": str(rem_req),
+                "x-ratelimit-remaining-requests": str(rem_daily_req),
                 "x-ratelimit-remaining-tokens": str(rem_tok),
+                "x-ratelimit-limit-requests": str(self.rpd_limit),
+                "x-ratelimit-limit-tokens": str(self.tpm_limit),
                 "reservation_id": res_id
             }
 

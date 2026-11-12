@@ -30,7 +30,8 @@ The system implements a production-grade, 4-step decoupled agentic pipeline desi
 | **6** | Groq Resilience, Rate Limiting & Backoff | `4f556d1` | Pushed | 95 passed | `the_relay/pipeline/resilience.py`, `tests/test_resilience_and_quotas.py` |
 | **7** | Streaming Integration & Groq Adapter | `bf55799` | Pushed | 105 passed | `the_relay/models/groq_client.py`, `scripts/ask.py`, `dashboard/app.py`, `tests/test_groq_streaming_integration.py` |
 | **8** | Load Generator & Reproducible Scenarios | `e60f460` | Pushed | 113 passed | `the_relay/traffic/generator.py`, `scripts/run_benchmarks.py`, `tests/test_load_scenarios_and_benchmarks.py` |
-| **9** | End-to-End Validation, Report & Handoff | *Current* | *Pending push* | 112 passed, 1 skipped | `docs/SUBMISSION_REPORT.md`, `README.md`, `docs/implementation/FINAL_REPORT.md` |
+| **9** | End-to-End Validation, Report & Handoff | `96968f9` | Pushed | 112 passed, 1 skipped | `docs/SUBMISSION_REPORT.md`, `README.md`, `docs/implementation/FINAL_REPORT.md` |
+| **Final Pass** | Pacing, A/B/C De-contamination, Provenance & Groq Limit Corrections | *Current* | *Pending push* | 113 passed, 1 skipped | `the_relay/config.py`, `the_relay/traffic/generator.py`, `docs/SUBMISSION_REPORT.md` |
 
 ---
 
@@ -60,8 +61,8 @@ The system implements a production-grade, 4-step decoupled agentic pipeline desi
 
 ## 4. Test Suite Summary
 
-- **Total Test Cases:** 113 collected items
-- **Passed:** 112 tests
+- **Total Test Cases:** 114 collected items
+- **Passed:** 113 tests
 - **Skipped:** 1 test (`tests/test_groq_live_opt_in.py::test_live_groq_opt_in_smoke` — skipped by default to protect API quotas; runs only with `--confirm-free-tier --authorized`)
 - **Failed / Blocked:** 0
 - **Execution Command:** `pytest -v`
@@ -112,9 +113,10 @@ All tables were generated directly from `data/runs/phase9_final_eval/results.csv
 
 ## 7. Remaining Limitations
 
-1. **Exact Two-Page Render Check:** While `docs/SUBMISSION_REPORT.md` has been structured compactly into 12 dense sections to fit the 2-page constraint, exact printed page count depends on the target PDF/Word conversion engine's font and margin settings.
-2. **Real Groq Benchmark Baseline:** Due to unverified key authorization, Table 2a/2b and Table 3 report calibrated stand-in simulation data rather than live GroqCloud inference.
-3. **In-Memory Concurrency Queue:** The admission queue is managed in-process via thread-safe Python locks; a multi-process or distributed deployment would require Redis or RabbitMQ for cross-instance queue coordination.
+1. **Two-Page Fit Verification:** Headless print-to-pdf rendering of the full 12-section submission report with complete benchmark tables measures 4 pages under standard print margins. A 2-page fit cannot be verified without aggressive table truncation or microscopic font formatting, and is therefore honestly documented as unverified/not fitting in full layout.
+2. **Real Groq Benchmark Baseline:** Due to unverified friend key authorization, Table 2a/2b and Table 3 report calibrated stand-in simulation data rather than live GroqCloud inference.
+3. **Synthetic Latency Calibration:** The stand-in simulator models latency via a truncated Gaussian distribution ($\mu=1200\text{ms}, \sigma=300\text{ms}$) rather than empirical Groq LPU execution traces.
+4. **In-Memory Concurrency Queue:** The admission queue is managed in-process via thread-safe Python locks; a multi-process or distributed deployment would require Redis or RabbitMQ for cross-instance queue coordination.
 
 ---
 

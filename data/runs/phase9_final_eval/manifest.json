@@ -1,7 +1,7 @@
 {
   "run_id": "phase9_final_eval",
-  "created_at": "2026-11-12T18:47:27.853663+00:00",
-  "git_commit": "e60f46071e90277d5fd3e34b3bc6de0e845ec0f4",
+  "created_at": "2026-11-12T19:32:20.759809+00:00",
+  "git_commit": "96968f917a11a379bc2ca5381b0fa519bae3a50a",
   "random_seed": 42,
   "offline_only": true,
   "configured_llm_provider": "groq",
@@ -47,15 +47,30 @@
     "q14_private_dna_cohorts",
     "q15_quantum_attention_speedup"
   ],
-  "output_csv": "C:\\Users\\udbha\\Desktop\\aivoice\\data\\runs\\phase9_final_eval\\results.csv",
-  "duration_seconds": 514.9,
+  "output_csv": "data/runs/phase9_final_eval/results.csv",
+  "duration_seconds": 334.08,
+  "steady_stats": {
+    "offered_count": 10,
+    "submitted_count": 10,
+    "accepted_count": 10,
+    "rejected_count": 0,
+    "successful_count": 7,
+    "failed_count": 3,
+    "peak_queue_depth": 5,
+    "max_concurrency": 5,
+    "target_interval_sec": 1.0,
+    "mean_measured_interval_sec": 1.001,
+    "mean_dispatch_lateness_ms": 4.73,
+    "min_measured_interval_sec": 0.986,
+    "max_measured_interval_sec": 1.015
+  },
   "burst_accounting": {
     "offered_count": 20,
     "submitted_count": 20,
     "accepted_count": 20,
     "rejected_count": 0,
-    "successful_count": 2,
-    "failed_count": 18,
+    "successful_count": 20,
+    "failed_count": 0,
     "peak_queue_depth": 20,
     "max_concurrency": 10
   },
@@ -64,10 +79,10 @@
     "submitted_count": 20,
     "accepted_count": 20,
     "rejected_count": 5,
-    "successful_count": 3,
-    "failed_count": 17,
+    "successful_count": 20,
+    "failed_count": 0,
     "peak_queue_depth": 15,
     "max_concurrency": 5
   },
-  "completed_at": "2026-11-12T18:56:02.765273+00:00"
+  "completed_at": "2026-11-12T19:37:54.852490+00:00"
 }

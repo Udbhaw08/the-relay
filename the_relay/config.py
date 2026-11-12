@@ -79,11 +79,22 @@ BASE_BACKOFF_SECONDS = float(os.getenv("BASE_BACKOFF_SECONDS", "2.0"))
 MAX_BACKOFF_SECONDS = float(os.getenv("MAX_BACKOFF_SECONDS", "30.0"))
 MAX_RETRY_AFTER_CAP = float(os.getenv("MAX_RETRY_AFTER_CAP", "60.0"))
 
-# Configurable local safety caps (do not assume public base limits match unverified friend account)
+# Published GroqCloud Free-plan limits for openai/gpt-oss-20b
+# (Source: Official Groq documentation. The organization Limits page remains the source of truth for account-specific quotas)
+GROQ_FREE_TIER_PUBLISHED_LIMITS = {
+    "model": "openai/gpt-oss-20b",
+    "rpm": 30,          # Requests per minute
+    "rpd": 1000,        # Requests per day (governed by x-ratelimit-limit-requests header)
+    "tpm": 8000,        # Tokens per minute (governed by x-ratelimit-limit-tokens header)
+    "tpd": 200000,      # Tokens per day
+}
+
+# Configurable local safety caps.
+# Defaults must never exceed published Free-plan values; conservative defaults protect shared organization quotas.
 LOCAL_RPM_LIMIT = int(os.getenv("LOCAL_RPM_LIMIT", "30"))
-LOCAL_TPM_LIMIT = int(os.getenv("LOCAL_TPM_LIMIT", "30000"))
-LOCAL_RPD_LIMIT = int(os.getenv("LOCAL_RPD_LIMIT", "14400"))
-LOCAL_TPD_LIMIT = int(os.getenv("LOCAL_TPD_LIMIT", "500000"))
+LOCAL_TPM_LIMIT = int(os.getenv("LOCAL_TPM_LIMIT", "8000"))
+LOCAL_RPD_LIMIT = int(os.getenv("LOCAL_RPD_LIMIT", "1000"))
+LOCAL_TPD_LIMIT = int(os.getenv("LOCAL_TPD_LIMIT", "200000"))
 MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "5"))
 MAX_QUEUE_CAPACITY = int(os.getenv("MAX_QUEUE_CAPACITY", "50"))
 

@@ -251,7 +251,8 @@ class RelayPipeline:
         queue_depth: Optional[int] = None,
         concurrency: Optional[int] = None,
         sleeper: Optional[Callable[[float], None]] = None,
-        rng: Optional[random.Random] = None
+        rng: Optional[random.Random] = None,
+        allow_degradation: bool = True
     ) -> PipelineResult:
         """Execute full pipeline for an incoming user question with monotonic component telemetry."""
         sleep_fn = sleeper or time.sleep
@@ -278,10 +279,11 @@ class RelayPipeline:
             # Step 2: Retrieval Tool Call
             steps_executed.append("Step 2: Passage Retrieval Tool")
             t_ret_start = time.perf_counter()
+            effective_limit_warning = limit_warning if allow_degradation else False
             chunks, effective_setting = self.step_2_retrieve_tool(
                 query=query,
                 setting_key=retrieval_setting,
-                limit_warning=limit_warning,
+                limit_warning=effective_limit_warning,
                 hint=parsed["target_hint"]
             )
             t_ret_end = time.perf_counter()
@@ -289,7 +291,7 @@ class RelayPipeline:
             timestamps[f"attempt_{attempt}_retrieval_start"] = t_ret_start
             timestamps[f"attempt_{attempt}_retrieval_end"] = t_ret_end
 
-            if limit_warning and effective_setting != retrieval_setting:
+            if allow_degradation and limit_warning and effective_setting != retrieval_setting:
                 degradation_reason = "rate_limit_adaptive_throttle"
 
             # Step 3: Synthesis
@@ -519,7 +521,8 @@ class RelayPipeline:
         queue_depth: Optional[int] = None,
         concurrency: Optional[int] = None,
         sleeper: Optional[Callable[[float], None]] = None,
-        rng: Optional[random.Random] = None
+        rng: Optional[random.Random] = None,
+        allow_degradation: bool = True
     ) -> Generator[str, None, PipelineResult]:
         """Execute full pipeline yielding stream tokens and returning final PipelineResult."""
         sleep_fn = sleeper or time.sleep
@@ -547,10 +550,11 @@ class RelayPipeline:
             # Step 2: Retrieval Tool Call
             steps_executed.append("Step 2: Passage Retrieval Tool")
             t_ret_start = time.perf_counter()
+            effective_limit_warning = limit_warning if allow_degradation else False
             chunks, effective_setting = self.step_2_retrieve_tool(
                 query=query,
                 setting_key=retrieval_setting,
-                limit_warning=limit_warning,
+                limit_warning=effective_limit_warning,
                 hint=parsed["target_hint"]
             )
             t_ret_end = time.perf_counter()
@@ -558,7 +562,7 @@ class RelayPipeline:
             timestamps[f"attempt_{attempt}_retrieval_start"] = t_ret_start
             timestamps[f"attempt_{attempt}_retrieval_end"] = t_ret_end
 
-            if limit_warning and effective_setting != retrieval_setting:
+            if allow_degradation and limit_warning and effective_setting != retrieval_setting:
                 degradation_reason = "rate_limit_adaptive_throttle"
 
             # Step 3: Synthesis Stream

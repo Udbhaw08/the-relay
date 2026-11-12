@@ -156,14 +156,16 @@ class StandInModelClient(BaseModelClient):
                 return "rate_limited", {
                     "error": "Daily budget exhausted",
                     "retry-after": "43200",  # 12 hours until reset
-                    "x-ratelimit-remaining-requests": "0"
+                    "x-ratelimit-remaining-requests": "0",
+                    "x-ratelimit-limit-requests": str(self.rpd_limit)
                 }
 
             if self._tpm_exhausted:
                 return "rate_limited", {
                     "error": "Token limit exceeded (TPM)",
                     "retry-after": "20",
-                    "x-ratelimit-remaining-tokens": "0"
+                    "x-ratelimit-remaining-tokens": "0",
+                    "x-ratelimit-limit-tokens": str(self.tpm_limit)
                 }
 
             # Clean timestamps older than 60 seconds
@@ -175,21 +177,25 @@ class StandInModelClient(BaseModelClient):
                 return "rate_limited", {
                     "error": f"Rate limit exceeded ({self.rpm_limit} RPM)",
                     "retry-after": str(retry_wait),
-                    "x-ratelimit-remaining-requests": "0"
+                    "x-ratelimit-remaining-tokens": "0"
                 }
 
             # Request accepted
             self._request_timestamps.append(now)
             self._daily_request_count += 1
-            remaining = str(self.rpm_limit - len(self._request_timestamps))
-            return None, {"x-ratelimit-remaining-requests": remaining}
+            rem_daily = str(max(0, self.rpd_limit - self._daily_request_count))
+            return None, {
+                "x-ratelimit-remaining-requests": rem_daily,
+                "x-ratelimit-limit-requests": str(self.rpd_limit),
+                "x-ratelimit-limit-tokens": str(self.tpm_limit)
+            }
 
     def _compute_calibrated_delay(self, tokens_out: int) -> tuple[float, float]:
         """Calculate TTFT and total generation delay with concurrency penalty."""
         with self._lock:
             in_flight = self._in_flight
         
-        # Log-normal jitter around base TTFT
+        # Truncated Gaussian (Normal) distribution centered around base TTFT (default mu=1200ms, sigma=300ms, min=150ms)
         raw_ttft = max(150.0, self._rng.gauss(self.base_ttft_ms, self.ttft_std_ms))
         
         # Concurrency queueing penalty: delay scales non-linearly with in-flight load

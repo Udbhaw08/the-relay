@@ -139,9 +139,11 @@ def test_failed_requests_excluded_from_answer_accuracy():
     ]
     syn_df = pd.DataFrame(synthetic_rows)
     t3 = generate_table_3(syn_df)
-    # Total questions asked is 3. Correct is 1 (33.3%), Wrong is 1 (33.3%), Refused is 0 (0.0%).
-    # The rate-limited request is NOT counted as a wrong answer!
-    assert "| 3 | 33.3% | 33.3% | 0.0% |" in t3
+    # Denominator for factual answer accuracy excludes the rate-limited request:
+    # 2 successful answerable questions: 1 correct (50.0% = 1/2), 1 wrong (50.0% = 1/2)
+    # 1 rate-limited request reported separately under infrastructure failures
+    assert "| 3 | 50.0% (1/2) | 50.0% (1/2) | N/A (0 ok) |" in t3
+    assert "| setting_a | 2/3 | 1 | 0 | 1 | 0 | 0/0 | 0 | 0 | 1/3 |" in t3
 
 # 11. Re-running Table Generation Does Not Mutate or Duplicate Source CSV
 def test_table_generation_is_read_only_and_idempotent():

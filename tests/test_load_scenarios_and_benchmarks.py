@@ -10,7 +10,7 @@ from the_relay.traffic.generator import TrafficGenerator, ConcurrencyTracker
 from the_relay.traffic.logger import ResultsLogger
 from the_relay.pipeline.orchestrator import RelayPipeline, PipelineResult
 from the_relay.models.stand_in import StandInModelClient
-from scripts.run_benchmarks import save_run_manifest, update_run_manifest
+from scripts.run_benchmarks import save_run_manifest, update_run_manifest, ROOT_DIR
 from scripts.compute_tables import generate_table_2a_and_2b, generate_table_3
 
 # 1. Steady start-to-start interval pacing
@@ -35,6 +35,64 @@ def test_steady_start_to_start_pacing():
         assert len(results) == 4
         # Total time should be roughly 3 intervals (0s, 0.05s, 0.10s, 0.15s) >= 0.14s
         assert t_total >= (3 * target_interval) * 0.85
+
+def test_steady_concurrent_scheduler_with_delayed_requests(monkeypatch):
+    """
+    Proves that the bounded concurrent scheduler dispatches requests at intended
+    start-to-start target intervals even when request durations exceed the interval.
+    In a synchronous loop, 4 requests * 150ms = 600ms minimum.
+    With concurrent dispatch, requests overlap and complete in < 450ms with concurrency >= 2.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        csv_file = Path(tmpdir) / "steady_delayed_test.csv"
+        pipeline = RelayPipeline()
+        logger = ResultsLogger(file_path=csv_file, run_id="steady_delayed_run")
+        gen = TrafficGenerator(pipeline=pipeline, logger=logger)
+
+        def delayed_run_request(*args, **kwargs):
+            time.sleep(0.15)
+            return PipelineResult(
+                request_id=kwargs.get("request_id", "test_req"),
+                scenario="steady",
+                source="stand-in",
+                start_time=time.time(),
+                first_token_ms=50.0,
+                total_ms=150.0,
+                status="ok",
+                retries=0,
+                tokens_in=100,
+                tokens_out=50,
+                cost_estimate=0.0,
+                retrieval_setting="setting_a",
+                chunks_retrieved=3,
+                answer_grade="correct",
+                answer="delayed mock answer",
+                ground_truth="mock",
+                is_correct=True,
+                effective_limit_warning=False,
+                concurrency=1,
+            )
+
+        monkeypatch.setattr(pipeline, "run_request", delayed_run_request)
+
+        t0 = time.perf_counter()
+        target_interval = 0.05  # 50ms interval
+        num_requests = 4
+        results = gen.run_scenario_steady(
+            num_requests=num_requests,
+            source="stand-in",
+            run_id="steady_delayed_run",
+            target_interval=target_interval,
+            max_concurrency=4
+        )
+        t_total = time.perf_counter() - t0
+
+        assert len(results) == 4
+        # Proves concurrent dispatch: total execution finishes well under synchronous 600ms
+        assert t_total < 0.45, f"Expected concurrent execution under 0.45s, took {t_total:.3f}s"
+        stats = gen.last_steady_stats
+        assert stats["max_concurrency"] >= 2, f"Expected concurrency >= 2, got {stats['max_concurrency']}"
+        assert abs(stats["mean_measured_interval_sec"] - target_interval) < 0.03
 
 # 2. ConcurrencyTracker admission and outcome accounting
 def test_concurrency_tracker_admission_accounting():
@@ -174,6 +232,18 @@ def test_run_manifest_metadata_and_update():
         assert data["duration_seconds"] == 12.34
         assert "completed_at" in data
         assert data["burst_accounting"]["rejected"] == 2
+
+        # Verify relative path when csv is within repository root
+        repo_csv = ROOT_DIR / "data" / "runs" / run_id / "results.csv"
+        manifest_path_2 = save_run_manifest(
+            run_id=run_id,
+            seed=42,
+            csv_path=repo_csv,
+            offline_only=True
+        )
+        with open(manifest_path_2, "r", encoding="utf-8") as f:
+            data_2 = json.load(f)
+        assert data_2["output_csv"] == f"data/runs/{run_id}/results.csv"
 
         # Clean up test manifest directory
         import shutil

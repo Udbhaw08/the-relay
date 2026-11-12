@@ -1,6 +1,6 @@
 # The Relay: Resilient Research Paper Assistant
 
-[![Tests](https://img.shields.io/badge/pytest-112%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/pytest-113%20passed-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-green.svg)]()
 
@@ -54,7 +54,7 @@ Fill in your Groq API key (`GROQ_API_KEY=...` and optionally `GROQ_MODEL=openai/
 ```bash
 pytest -v
 ```
-*(All 112 offline unit and integration tests pass; 1 opt-in live test is skipped by default).*
+*(All 113 offline unit and integration tests pass; 1 opt-in live test is skipped by default).*
 
 ### 4. Interactive CLI (`scripts/ask.py`)
 Run an answerable query using the offline stand-in:

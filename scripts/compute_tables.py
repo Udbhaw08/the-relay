@@ -40,15 +40,15 @@ def format_latencies_2(p50: Optional[float], p95: Optional[float]) -> str:
     return f"{p50:.1f} / {p95:.1f} ms"
 
 def generate_table_1() -> str:
-    """Generate Table 1: Limits found in real service (GroqCloud Free Tier)."""
+    """Generate Table 1: Limits found in real service (GroqCloud Free Tier for openai/gpt-oss-20b)."""
     rows = [
-        ("Requests per minute", "Model-dependent (e.g. 30 RPM)", "Groq Cloud Console & x-ratelimit-limit-requests header", "high"),
-        ("Tokens per minute", "Model-dependent (e.g. 6,000-30,000 TPM)", "Groq Free Tier Specs & x-ratelimit-limit-tokens header", "high"),
-        ("Requests per day", "Organization-dependent (e.g. 14,400 RPD)", "Groq Cloud Free Tier Organization Documentation", "high"),
-        ("Tokens per day", "not measured", "Provider documentation unstated (governed by TPM/RPD)", "medium"),
-        ("Requests in flight at once", "Dynamic / 1-5 concurrent", "Groq Cloud documentation and probe latency monitoring", "medium"),
-        ("What it returns when a limit is hit", "HTTP 429 rate_limit_exceeded", "Live API error payload and header inspection", "high"),
-        ("Time until it recovers", "Dynamic via 'retry-after' header", "x-ratelimit-reset-requests / retry-after header", "high"),
+        ("Requests per minute", "30 RPM (published Free plan)", "Official Groq Documentation (openai/gpt-oss-20b published tier)", "high"),
+        ("Tokens per minute", "8,000 TPM (published Free plan)", "Official Groq Documentation & x-ratelimit-limit-tokens header", "high"),
+        ("Requests per day", "1,000 RPD (published Free plan)", "Official Groq Documentation & x-ratelimit-limit-requests header (Groq documents this header as RPD)", "high"),
+        ("Tokens per day", "200,000 TPD (published Free plan)", "Official Groq Documentation (openai/gpt-oss-20b published tier)", "high"),
+        ("Requests in flight at once", "Dynamic / 1-5 concurrent (unverified friend account)", "Groq Cloud Documentation / unverified organization Limits page", "medium"),
+        ("What it returns when a limit is hit", "HTTP 429 rate_limit_exceeded", "Groq API error payload specification & error classifier", "high"),
+        ("Time until it recovers", "Dynamic via 'retry-after' / 'x-ratelimit-reset-*' headers", "x-ratelimit-reset-tokens (minute) / x-ratelimit-reset-requests (day) / retry-after", "high"),
     ]
     
     md = [
@@ -133,8 +133,11 @@ def generate_table_2a_and_2b(df: pd.DataFrame, run_id: Optional[str] = None) -> 
         
         avg_tokens_out = round(float(ok_subset["tokens_out"].mean()), 1) if len(ok_subset) > 0 else 0.0
         
-        # Cost calculation: unbilled free tier without commercial rate card
-        cost_per_1k = "N/A (Free Tier / unbilled)"
+        # Cost calculation: accurate provenance separation
+        if source in ("stand-in", "standin"):
+            cost_per_1k = "N/A — no live provider usage"
+        else:
+            cost_per_1k = "N/A (Free Tier / unbilled)"
 
         t2b_lines.append(
             f"| {sc} | {succeeded_pct}% | {rate_limited_pct}% | {timed_out_pct}% | "
@@ -148,6 +151,7 @@ def generate_table_3(df: pd.DataFrame, run_id: Optional[str] = None) -> str:
     Generate Table 3: Retrieval settings benchmark.
     Strictly groups evaluation rows by scenario (eval_setting_a, eval_setting_b, eval_setting_c)
     and optional run_id, completely avoiding cross-scenario contamination from load tests.
+    Excludes infrastructure failures from factual accuracy denominators and reports sample counts.
     """
     settings = [
         ("setting_a", "Piece size 250, 3 fetched, re-rank: no"),
@@ -159,6 +163,12 @@ def generate_table_3(df: pd.DataFrame, run_id: Optional[str] = None) -> str:
         "### Table 3: Retrieval settings (at least three)\n",
         "| Setting (piece size, pieces fetched, re-rank yes or no) | Questions asked | Correct and cited % | Wrong % | Correctly refused % | Tokens per answer | First token p50 / p95 (ms) | Total time p50 / p95 (ms) |",
         "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
+    ]
+
+    breakdown_lines = [
+        "\n#### Detailed Retrieval Accuracy & Failure Breakdown",
+        "| Setting | Ans Evaluated | Correct & Cited | Partial | Factually Wrong | Wrongly Refused | Unans Evaluated | Correctly Refused | Hallucinated | Infra Failures |",
+        "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
     ]
 
     active_df = df.copy()
@@ -176,12 +186,46 @@ def generate_table_3(df: pd.DataFrame, run_id: Optional[str] = None) -> str:
             )
             continue
 
-        ok_sub = sub[sub["status"] == "ok"]
-        correct_cited_pct = round((len(ok_sub[ok_sub["answer_grade"] == "correct"]) / q_count) * 100.0, 1)
-        wrong_pct = round((len(ok_sub[ok_sub["answer_grade"].isin(["wrong", "refused_wrongly"])]) / q_count) * 100.0, 1)
-        refused_pct = round((len(ok_sub[ok_sub["answer_grade"] == "refused_correctly"]) / q_count) * 100.0, 1)
+        # Separate answerable (q01-q12) vs unanswerable (q13-q15)
+        is_unans = sub["request_id"].str.contains(r"q1[345]|negative", case=False, regex=True)
+        ans_sub = sub[~is_unans]
+        unans_sub = sub[is_unans]
+
+        # Infrastructure failures (excluded from factual accuracy denominator)
+        infra_failures = sub[sub["status"].isin(["rate_limited", "timeout", "error"])]
+
+        # Answerable questions factual grading (denominator = successful answerable requests)
+        ans_ok = ans_sub[ans_sub["status"] == "ok"]
+        n_ans_ok = len(ans_ok)
+        n_correct = len(ans_ok[ans_ok["answer_grade"] == "correct"])
+        n_partial = len(ans_ok[ans_ok["answer_grade"] == "partially_correct"])
+        n_wrong_facts = len(ans_ok[ans_ok["answer_grade"] == "wrong"])
+        n_wrong_refusal = len(ans_ok[ans_ok["answer_grade"].isin(["refused_wrongly", "refused_incorrectly"])])
+        n_wrong_all = n_wrong_facts + n_wrong_refusal
+
+        if n_ans_ok > 0:
+            correct_cited_pct = round((n_correct / n_ans_ok) * 100.0, 1)
+            correct_str = f"{correct_cited_pct}% ({n_correct}/{n_ans_ok})"
+            wrong_pct = round((n_wrong_all / n_ans_ok) * 100.0, 1)
+            wrong_str = f"{wrong_pct}% ({n_wrong_all}/{n_ans_ok})"
+        else:
+            correct_str = "N/A (0 ok)"
+            wrong_str = "N/A (0 ok)"
+
+        # Unanswerable questions refusal grading (denominator = successful unanswerable requests)
+        unans_ok = unans_sub[unans_sub["status"] == "ok"]
+        n_unans_ok = len(unans_ok)
+        n_refused_ok = len(unans_ok[unans_ok["answer_grade"] == "refused_correctly"])
+        n_hallucinated = len(unans_ok[unans_ok["answer_grade"].isin(["wrong", "incorrect", "correct"])])
+
+        if n_unans_ok > 0:
+            refused_pct = round((n_refused_ok / n_unans_ok) * 100.0, 1)
+            refused_str = f"{refused_pct}% ({n_refused_ok}/{n_unans_ok})"
+        else:
+            refused_str = "N/A (0 ok)"
 
         # Tokens per answer (output tokens on successful answers)
+        ok_sub = sub[sub["status"] == "ok"]
         if len(ok_sub) > 0:
             avg_tokens = round(float(ok_sub["tokens_out"].mean()), 1)
         else:
@@ -196,11 +240,16 @@ def generate_table_3(df: pd.DataFrame, run_id: Optional[str] = None) -> str:
         tot_str = format_latencies_2(tot_p50, tot_p95)
 
         t3_lines.append(
-            f"| {label} | {q_count} | {correct_cited_pct}% | {wrong_pct}% | {refused_pct}% | "
+            f"| {label} | {q_count} | {correct_str} | {wrong_str} | {refused_str} | "
             f"{avg_tokens} | {ttft_str} | {tot_str} |"
         )
 
-    return "\n".join(t3_lines)
+        breakdown_lines.append(
+            f"| {s_key} | {n_ans_ok}/{len(ans_sub)} | {n_correct} | {n_partial} | {n_wrong_facts} | {n_wrong_refusal} | "
+            f"{n_unans_ok}/{len(unans_sub)} | {n_refused_ok} | {n_hallucinated} | {len(infra_failures)}/{q_count} |"
+        )
+
+    return "\n".join(t3_lines) + "\n" + "\n".join(breakdown_lines)
 
 def main():
     parser = argparse.ArgumentParser(description="Aggregate and generate experimental benchmark tables.")

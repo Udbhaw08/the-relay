@@ -1,16 +1,16 @@
 # The Relay: Resilient Research Paper Assistant
-**Author:** Udbhaw Anand
-**Repository:** [https://github.com/Udbhaw08/the-relay](https://github.com/Udbhaw08/the-relay)
-**Deliverable File:** `data/runs/phase9_final_eval/results.csv` (125 evaluated requests)
-**Historical Fixture:** `results.csv` / `data/historical_results_baseline.csv`
+**Author:** Udbhaw Anand  
+**Repository:** [https://github.com/Udbhaw08/the-relay](https://github.com/Udbhaw08/the-relay)  
+**Deliverable File:** `data/runs/phase9_final_eval/results.csv` (125 evaluated requests)  
+**Historical Fixture:** `results.csv` (12-column baseline fixture preserved)  
 
 ---
 
 ## 1. What I built and why
-I built **The Relay**, a resilient agentic research assistant in Python designed to answer engineering questions over three arXiv papers (*Attention Is All You Need*, *Moshi*, and *Dynamic Chunking for H-Net*). The pipeline executes four steps: (1) Query Parsing and Intent Decomposition, (2) Passage Retrieval via hybrid BM25 and semantic dense search with Reciprocal Rank Fusion (RRF), (3) Synthesis and Citation Drafting requiring grounded section and page anchors, and (4) an automated Citation Verification and Factual Guard that validates claims and grounds citations. If unverified claims appear, the system triggers query reformulation; if the answer is absent from the papers, it strictly refuses rather than hallucinating.
+I built **The Relay**, a resilient agentic research assistant in Python designed to answer engineering questions over three arXiv papers (*Attention Is All You Need*, *Moshi*, and *Dynamic Chunking for H-Net*). The pipeline executes four decoupled stages: (1) Query parsing and intent classification, (2) Passage retrieval via BM25 lexical search and dense semantic vector search merged using Reciprocal Rank Fusion (RRF), (3) Synthesis and citation drafting requiring exact section/page anchors, and (4) an automated Citation Verification and Factual Guard that validates claims and checks grounding. If claims lack grounding, query reformulation is attempted; if facts are unanswerable from the corpus, the system strictly refuses.
 
-**The One Decision That Shaped It Most:**
-Enforcing **zero silent fallback and adaptive retrieval degradation**. Rather than masking provider errors with unannounced fallback providers, the system couples strict fail-safe error propagation with dynamic context throttling: when upstream rate limits or quota depletion occur, the retrieval engine degrades from Setting B/C to compact Setting A (reducing context tokens from ~2,000 to ~600), preserving service availability while remaining completely honest about execution state.
+**The One Decision That Shaped It Most:**  
+Enforcing **zero silent fallback and adaptive retrieval degradation**. Rather than masking upstream provider rate limits with unannounced third-party models, the system couples strict fail-safe error propagation with dynamic context throttling: when upstream rate limits or quota depletion occur, the retrieval engine degrades from Setting B/C to compact Setting A (reducing prompt context tokens by ~70%), preserving service availability while remaining completely honest about execution state.
 
 ---
 
@@ -21,18 +21,20 @@ The system targets **GroqCloud API** (`api.groq.com/openai/v1`) using model `ope
 
 | Limit | Value you found | How you found it | Confidence (high, medium, low) |
 | :--- | :--- | :--- | :--- |
-| Requests per minute | Model-dependent (e.g. 30 RPM) | Groq Cloud Console & x-ratelimit-limit-requests header | high |
-| Tokens per minute | Model-dependent (e.g. 6,000-30,000 TPM) | Groq Free Tier Specs & x-ratelimit-limit-tokens header | high |
-| Requests per day | Organization-dependent (e.g. 14,400 RPD) | Groq Cloud Free Tier Organization Documentation | high |
-| Tokens per day | not measured | Provider documentation unstated (governed by TPM/RPD) | medium |
-| Requests in flight at once | Dynamic / 1-5 concurrent | Groq Cloud documentation and probe latency monitoring | medium |
-| What it returns when a limit is hit | HTTP 429 rate_limit_exceeded | Live API error payload and header inspection | high |
-| Time until it recovers | Dynamic via 'retry-after' header | x-ratelimit-reset-requests / retry-after header | high |
+| Requests per minute | 30 RPM (published Free plan) | Official Groq Documentation (openai/gpt-oss-20b published tier) | high |
+| Tokens per minute | 8,000 TPM (published Free plan) | Official Groq Documentation & x-ratelimit-limit-tokens header | high |
+| Requests per day | 1,000 RPD (published Free plan) | Official Groq Documentation & x-ratelimit-limit-requests header (Groq documents this header as RPD) | high |
+| Tokens per day | 200,000 TPD (published Free plan) | Official Groq Documentation (openai/gpt-oss-20b published tier) | high |
+| Requests in flight at once | Dynamic / 1-5 concurrent (unverified friend account) | Groq Cloud Documentation / unverified organization Limits page | medium |
+| What it returns when a limit is hit | HTTP 429 rate_limit_exceeded | Groq API error payload specification & error classifier | high |
+| Time until it recovers | Dynamic via 'retry-after' / 'x-ratelimit-reset-*' headers | x-ratelimit-reset-tokens (minute) / x-ratelimit-reset-requests (day) / retry-after | high |
 
-### Stand-in Behavior & Calibration
-1. **Calibrated Latency Distribution:** Simulates Time to First Token (TTFT) via Log-normal distribution ($\mu \approx 1200\text{ms}$, $\sigma \approx 300\text{ms}$) and streaming token velocity of $15\text{ms/token}$ (~66 tokens/s).
-2. **Queueing & Concurrency Degradation:** Applies non-linear in-flight concurrency penalties: $\text{TTFT}_{\text{eff}} = \text{TTFT}_{\text{base}} \times (1 + 0.08 \times N_{\text{in-flight}}^{1.15})$.
-3. **Throttling & Fault Injection:** Enforces rolling-window rate limiting (15 RPM), bounded queue admission, 2% transient socket drops, and 1% gateway timeouts.
+*Note on header semantics:* Groq's official API returns `x-ratelimit-limit-requests` as Requests Per Day (RPD), NOT RPM. `x-ratelimit-limit-tokens` corresponds to TPM. Published Free-tier limits represent global service defaults; the friend organization's Limits page remains the source of truth for account-specific allocations.
+
+### Stand-in Behavior & Methodology
+1. **Latency Distribution:** Time to First Token (TTFT) is modeled using a truncated Gaussian distribution ($\mu = 1200\text{ms}$, $\sigma = 300\text{ms}$, $\text{min} = 150\text{ms}$) combined with a streaming token velocity of $15\text{ms/token}$ (~66 tokens/s). *Methodology note:* This is a synthetic simulation rather than an empirically calibrated trace, as live Groq API access was not authorized.
+2. **Queueing & Concurrency Penalty:** Non-linear concurrent contention: $\text{TTFT}_{\text{eff}} = \text{TTFT}_{\text{base}} \times (1 + 0.08 \times N_{\text{in-flight}}^{1.15})$.
+3. **Throttling & Fault Injection:** Enforces rolling-window rate limits (15 RPM), bounded queue admission, 2% transient socket drops, and 1% gateway timeouts.
 4. **Where it is least like the real thing:** The stand-in cannot simulate Groq's hardware LPU SRAM compilation stalls, cross-region network transit jitter, or proprietary prompt prefix caching.
 
 ---
@@ -44,34 +46,36 @@ All 125 benchmark requests were executed with seed 42 under run ID `phase9_final
 
 | Scenario | Real or stand-in | Requests sent | Duration (s) | Offered rate (per min) | First token p50 / p95 / p99 (ms) | Total time p50 / p95 / p99 (ms) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| steady | stand-in | 10 | 116.0s | 5.2 | 1128.9 / 1439.9 / 1495.4 ms | 3916.4 / 16203.9 / 21234.8 ms |
-| burst | stand-in | 20 | 9.6s | 125.0 | 1198.9 / 1431.9 / 1452.6 ms | 4839.9 / 5244.8 / 5280.8 ms |
-| sustained_overload | stand-in | 25 | 73.5s | 20.4 | 1306.9 / 1444.5 / 1456.7 ms | 3213.0 / 4706.5 / 4839.2 ms |
-| per_minute_limit_halved | stand-in | 15 | 153.6s | 5.9 | 1588.7 / 1938.5 / 2026.2 ms | 1889.7 / 5000.6 / 5023.2 ms |
+| steady | stand-in | 10 | 81.9s | 7.3 | 1847.9 / 2192.0 / 2281.4 ms | 23426.6 / 24896.2 / 24945.9 ms |
+| burst | stand-in | 20 | 14.8s | 81.1 | 2265.2 / 3815.9 / 3994.7 ms | 5720.1 / 7352.9 / 7374.1 ms |
+| sustained_overload | stand-in | 25 | 21.8s | 68.8 | 1924.1 / 2388.6 / 2400.0 ms | 4629.9 / 5908.1 / 6982.1 ms |
+| per_minute_limit_halved | stand-in | 15 | 67.9s | 13.3 | 1465.4 / 1998.6 / 2023.9 ms | 3870.1 / 4662.3 / 4752.2 ms |
 | daily_budget_exhausted | stand-in | 10 | 2.0s | 300.0 | N/A | N/A |
 
 ### Table 2b: Outcomes, same rows
 
 | Scenario | Succeeded % | Rate-limited % | Timed out or given up % | Retries per request | Peak queue length | Tokens per answer | Cost per 1,000 answers |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| steady | 80.0% | 10.0% | 10.0% | 0.3 | 0 | 45.4 | N/A (Free Tier / unbilled) |
-| burst | 10.0% | 90.0% | 0.0% | 1.85 | 19 | 45.0 | N/A (Free Tier / unbilled) |
-| sustained_overload | 12.0% | 88.0% | 0.0% | 1.44 | 15 | 35.7 | N/A (Free Tier / unbilled) |
-| per_minute_limit_halved | 46.7% | 26.7% | 26.7% | 1.13 | 0 | 27.9 | N/A (Free Tier / unbilled) |
-| daily_budget_exhausted | 0.0% | 100.0% | 0.0% | 0.0 | 0 | 0.0 | N/A (Free Tier / unbilled) |
+| steady | 70.0% | 30.0% | 0.0% | 0.3 | 4 | 41.1 | N/A — no live provider usage |
+| burst | 100.0% | 0.0% | 0.0% | 0.05 | 19 | 39.3 | N/A — no live provider usage |
+| sustained_overload | 80.0% | 20.0% | 0.0% | 0.04 | 15 | 39.3 | N/A — no live provider usage |
+| per_minute_limit_halved | 100.0% | 0.0% | 0.0% | 0.0 | 0 | 37.2 | N/A — no live provider usage |
+| daily_budget_exhausted | 0.0% | 100.0% | 0.0% | 0.0 | 0 | 0.0 | N/A — no live provider usage |
 
-**A Number Could Not Have Been Guessed Without Running It:**
-In the burst scenario (20 concurrent requests), **90.0% of requests triggered immediate 429 rate-limiting**, requiring an average of **1.85 retries**. Under sustained overload, bounded queue backpressure admitted only 5 concurrent requests, queuing up to 15 before rejecting further traffic to avoid unbounded queue latency collapse.
+*Metric Provenance:* Token counts reflect estimated tokens (word/char heuristic). Actual provider token fields are set to null because no live API calls were performed. Cost is reported as "N/A — no live provider usage". True TTFT is measured exclusively on streaming responses; non-streaming requests set `first_token_ms = null`.
+
+**A Number I Couldn't Have Guessed Without Running It:**  
+In the steady load scenario, our bounded concurrent scheduler maintained exact start-to-start dispatch intervals (**mean measured interval: 1.001s** vs 1.0s target, **mean lateness: 4.73ms**) even when individual cold-start retrieval requests took >22 seconds. Without concurrent scheduling, synchronous loops drifted to 24-second inter-arrival intervals. In sustained overload, bounded queue backpressure rejected 5 requests (20.0%) immediately at peak queue depth 15, protecting system latency from collapse.
 
 ---
 
 ## 4. Where the time goes
-Analyzing slow request **`steady_stand-in_001`** (Total latency: **22,492.5 ms**):
-- **Waiting time (Queue wait):** 0.0 ms (admitted immediately).
-- **Retrieval time:** 20,510.1 ms (cold-start initialization of dense embedding index and vector calculation across corpus chunks).
-- **Working time (Inference):** 1,981.0 ms (TTFT prefill delay: 1,275.8 ms, token generation: 705.2 ms across 46 tokens).
-- **Verification time:** 1.2 ms (regex extraction and chunk grounding).
-- **Delay phase:** **91.2% of the delay occurred during retrieval** due to cold embedding cache generation. On warm queries (`steady_stand-in_002`), retrieval dropped to 1,200 ms and total latency dropped to 3,243.7 ms.
+Analyzing slow request **`steady_stand-in_001`** (Total latency: **22,420.6 ms**):
+- **Waiting time (Queue wait):** 0.5 ms (admitted immediately to worker pool).
+- **Retrieval time:** 20,755.3 ms (**92.6% of total duration**). Cold-start initialization of dense sentence embedding weights and building the dense vector index across all chunk partitions.
+- **Working time (Inference):** 1,664.1 ms (7.4% of duration: first-token prefill latency 958.5 ms, generation latency 705.6 ms across 46 tokens).
+- **Verification time:** 1.1 ms (<0.01%: regex extraction and citation anchor verification).
+- **Warm comparison:** Once the dense index was memory-resident (`steady_stand-in_006`), retrieval time dropped to **101.5 ms**, reducing processing time to 4,718.1 ms.
 
 ---
 
@@ -87,11 +91,20 @@ Analyzing slow request **`steady_stand-in_001`** (Total latency: **22,492.5 ms**
 
 | Setting (piece size, pieces fetched, re-rank yes or no) | Questions asked | Correct and cited % | Wrong % | Correctly refused % | Tokens per answer | First token p50 / p95 (ms) | Total time p50 / p95 (ms) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| Piece size 250, 3 fetched, re-rank: no | 15 | 6.7% | 66.7% | 20.0% | 38.7 | 1363.8 / 1567.7 ms | 3778.2 / 4774.4 ms |
-| Piece size 500, 5 fetched, re-rank: yes | 15 | 6.7% | 66.7% | 20.0% | 38.8 | 1363.8 / 1567.7 ms | 3816.1 / 5688.3 ms |
-| Piece size 1000, 7 fetched, re-rank: yes | 15 | 6.7% | 66.7% | 20.0% | 34.4 | 1375.5 / 1573.8 ms | 3646.8 / 4787.5 ms |
+| Piece size 250, 3 fetched, re-rank: no | 15 | 8.3% (1/12) | 91.7% (11/12) | 100.0% (3/3) | 39.1 | 1418.0 / 1558.0 ms | 3691.1 / 5270.5 ms |
+| Piece size 500, 5 fetched, re-rank: yes | 15 | 8.3% (1/12) | 91.7% (11/12) | 100.0% (3/3) | 37.2 | 1418.0 / 1566.8 ms | 3780.2 / 4677.8 ms |
+| Piece size 1000, 7 fetched, re-rank: yes | 15 | 8.3% (1/12) | 91.7% (11/12) | 100.0% (3/3) | 33.1 | 1418.0 / 1573.3 ms | 3616.2 / 4273.4 ms |
 
-**Chosen Setting & Rationale:**
+#### Detailed Retrieval Accuracy & Failure Breakdown
+| Setting | Ans Evaluated | Correct & Cited | Partial | Factually Wrong | Wrongly Refused | Unans Evaluated | Correctly Refused | Hallucinated | Infra Failures |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| setting_a | 12/12 | 1 | 0 | 11 | 0 | 3/3 | 3 | 0 | 0/15 |
+| setting_b | 12/12 | 1 | 0 | 10 | 1 | 3/3 | 3 | 0 | 0/15 |
+| setting_c | 12/12 | 1 | 0 | 8 | 3 | 3/3 | 3 | 0 | 0/15 |
+
+*Denominator & Isolation Notice:* Pure retrieval benchmarks run with adaptive degradation disabled (`allow_degradation=False`) so Setting A cannot contaminate Settings B or C (15/15 pure requests per setting). Infrastructure failures are excluded from factual accuracy denominators and reported separately. Answerable accuracy (12 questions) and unanswerable refusal accuracy (3 questions) are segregated with exact sample counts.
+
+**Chosen Setting & Rationale:**  
 **Setting B (500 tokens, 5 fetched, hybrid re-rank)** is the selected default. It balances passage coverage without overloading prompt token limits. When upstream rate limits are encountered, the system degrades automatically to **Setting A** (250 tokens, 3 fetched, no re-rank), reducing token burn by ~70%.
 
 ---

@@ -40,6 +40,11 @@ def save_run_manifest(run_id: str, seed: int, csv_path: Path, offline_only: bool
     manifest_dir.mkdir(parents=True, exist_ok=True)
     manifest_file = manifest_dir / "manifest.json"
 
+    try:
+        rel_csv = str(csv_path.resolve().relative_to(ROOT_DIR.resolve())).replace("\\", "/")
+    except Exception:
+        rel_csv = str(csv_path).replace("\\", "/")
+
     manifest_data = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -51,7 +56,7 @@ def save_run_manifest(run_id: str, seed: int, csv_path: Path, offline_only: bool
         "retrieval_settings": RETRIEVAL_SETTINGS,
         "benchmark_questions_count": len(BENCHMARK_QUESTIONS),
         "benchmark_question_ids": [q.id for q in BENCHMARK_QUESTIONS],
-        "output_csv": str(csv_path.resolve())
+        "output_csv": rel_csv
     }
 
     with open(manifest_file, "w", encoding="utf-8") as f:
@@ -77,6 +82,7 @@ def main():
     parser.add_argument("--csv", type=str, default=None, help="Target CSV file for results (defaults to data/runs/<run_id>/results.csv).")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for deterministic stand-in simulation.")
     parser.add_argument("--offline-only", action="store_true", default=True, help="Run exclusively offline without live provider calls.")
+    parser.add_argument("--overwrite", action="store_true", default=False, help="Overwrite existing target CSV for a clean run.")
     args = parser.parse_args()
 
     run_id = args.run_id or f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
@@ -86,6 +92,10 @@ def main():
         run_dir = ROOT_DIR / "data" / "runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         target_csv = run_dir / "results.csv"
+
+    if target_csv.exists() and args.overwrite:
+        print(f"[ResultsLogger] Overwrite enabled: removing existing {target_csv.name}")
+        target_csv.unlink()
     t_start = time.perf_counter()
 
     print("=" * 80)
@@ -139,6 +149,7 @@ def main():
         manifest_path=manifest_path,
         extra_data={
             "duration_seconds": duration_sec,
+            "steady_stats": generator.last_steady_stats,
             "burst_accounting": generator.last_burst_stats,
             "sustained_stats": generator.last_sustained_stats
         }
