@@ -101,23 +101,41 @@ with tabs[0]:
             user_query = st.text_area("Question to test:", value=matched_q.question, height=100)
             is_unanswerable = matched_q.expected_negative
 
-        run_btn = st.button("🚀 Run Pipeline Request", type="primary", use_container_width=True)
+        col_btn, col_opt = st.columns([2, 1])
+        with col_btn:
+            run_btn = st.button("🚀 Run Pipeline Request", type="primary", use_container_width=True)
+        with col_opt:
+            enable_streaming = st.checkbox("Stream response tokens in real-time", value=True)
 
     if run_btn and user_query:
-        with st.spinner("Executing 4-Step Pipeline..."):
-            res = pipeline.run_request(
-                query=user_query,
-                request_id=f"web_ui_{int(time.time())}",
-                source=source_choice,
-                retrieval_setting=setting_choice,
-                expected_negative=is_unanswerable
-            )
+        if enable_streaming:
+            with st.chat_message("assistant"):
+                st.caption("⚡ Streaming response from pipeline...")
+                stream = pipeline.run_request_stream(
+                    query=user_query,
+                    request_id=f"web_ui_{int(time.time())}",
+                    source=source_choice,
+                    retrieval_setting=setting_choice,
+                    expected_negative=is_unanswerable
+                )
+                streamed_text = st.write_stream(stream)
+                res = stream.result
+        else:
+            with st.spinner("Executing 4-Step Pipeline..."):
+                res = pipeline.run_request(
+                    query=user_query,
+                    request_id=f"web_ui_{int(time.time())}",
+                    source=source_choice,
+                    retrieval_setting=setting_choice,
+                    expected_negative=is_unanswerable
+                )
 
         st.markdown("---")
         # Top KPI Metrics
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Execution Status", res.status.upper())
-        m2.metric("First Token (TTFT)", f"{res.first_token_ms:.1f} ms")
+        ttft_str = f"{res.first_token_ms:.1f} ms" if res.first_token_ms is not None else "N/A"
+        m2.metric("First Token (TTFT)", ttft_str)
         m3.metric("Total Latency", f"{res.total_ms:.1f} ms")
         m4.metric("Tokens In / Out", f"{res.tokens_in} / {res.tokens_out}")
         m5.metric("Evaluation Grade", res.answer_grade.replace("_", " ").title())
@@ -146,7 +164,7 @@ with tabs[0]:
             st.markdown(f"""
             <div class="step-box">
                 <b>Step 2: Retrieval Tool</b><br>
-                <small>BM25 + Lexical Boosts ({res.retrieval_setting}; dense planned in Phase 4)</small>
+                <small>Hybrid BM25 + Dense all-MiniLM-L6-v2 + RRF ({res.retrieval_setting})</small>
             </div>
             """, unsafe_allow_html=True)
             st.caption("✅ Chunks Retrieved")
