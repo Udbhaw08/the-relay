@@ -41,8 +41,8 @@ def test_groq_successful_completion_non_streaming():
     assert resp.provider == "groq"
     assert resp.rate_limit_headers.get("x-ratelimit-remaining-requests") == "29"
     assert resp.rate_limit_headers.get("id") == "chatcmpl_mock_123"
-    assert resp.first_token_ms > 0
-    assert resp.total_ms >= resp.first_token_ms
+    assert resp.first_token_ms is None  # Non-streaming has null TTFT; true TTFT measured via streaming
+    assert resp.total_ms > 0
 
 # 2. Successful streaming generation
 def test_groq_successful_streaming():
@@ -303,7 +303,11 @@ def test_smoke_test_blocks_without_authorization_flags():
 def test_compute_tables_table1_output():
     from scripts.compute_tables import generate_table_1
     t1 = generate_table_1()
-    assert "Table 1: Limits you found in the real service" in t1
+    assert "Table 1: Published Groq Free-plan limits" in t1
     assert "Groq Cloud" in t1 or "Groq" in t1
     assert "429" in t1
+    assert "30 RPM" in t1
+    assert "8,000 TPM" in t1
+    assert "1,000 RPD" in t1
+    assert "200,000 TPD" in t1
 

@@ -52,7 +52,7 @@ st.sidebar.markdown("### ⚙️ Pipeline Controls")
 source_choice = st.sidebar.radio(
     "Model Source:",
     ["real", "stand-in"],
-    format_func=lambda x: "🟢 Live Model (GroqCloud - openai/gpt-oss-20b)" if x == "real" else "🟡 Calibrated Stand-in Simulator",
+    format_func=lambda x: "🟢 Groq model configured — live access unverified (openai/gpt-oss-20b)" if x == "real" else "🟡 Calibrated Stand-in Simulator",
     index=0
 )
 
@@ -101,23 +101,41 @@ with tabs[0]:
             user_query = st.text_area("Question to test:", value=matched_q.question, height=100)
             is_unanswerable = matched_q.expected_negative
 
-        run_btn = st.button("🚀 Run Pipeline Request", type="primary", use_container_width=True)
+        col_btn, col_opt = st.columns([2, 1])
+        with col_btn:
+            run_btn = st.button("🚀 Run Pipeline Request", type="primary", use_container_width=True)
+        with col_opt:
+            enable_streaming = st.checkbox("Stream response tokens in real-time", value=True)
 
     if run_btn and user_query:
-        with st.spinner("Executing 4-Step Pipeline..."):
-            res = pipeline.run_request(
-                query=user_query,
-                request_id=f"web_ui_{int(time.time())}",
-                source=source_choice,
-                retrieval_setting=setting_choice,
-                expected_negative=is_unanswerable
-            )
+        if enable_streaming:
+            with st.chat_message("assistant"):
+                st.caption("⚡ Streaming response from pipeline...")
+                stream = pipeline.run_request_stream(
+                    query=user_query,
+                    request_id=f"web_ui_{int(time.time())}",
+                    source=source_choice,
+                    retrieval_setting=setting_choice,
+                    expected_negative=is_unanswerable
+                )
+                streamed_text = st.write_stream(stream)
+                res = stream.result
+        else:
+            with st.spinner("Executing 4-Step Pipeline..."):
+                res = pipeline.run_request(
+                    query=user_query,
+                    request_id=f"web_ui_{int(time.time())}",
+                    source=source_choice,
+                    retrieval_setting=setting_choice,
+                    expected_negative=is_unanswerable
+                )
 
         st.markdown("---")
         # Top KPI Metrics
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Execution Status", res.status.upper())
-        m2.metric("First Token (TTFT)", f"{res.first_token_ms:.1f} ms")
+        ttft_str = f"{res.first_token_ms:.1f} ms" if res.first_token_ms is not None else "N/A"
+        m2.metric("First Token (TTFT)", ttft_str)
         m3.metric("Total Latency", f"{res.total_ms:.1f} ms")
         m4.metric("Tokens In / Out", f"{res.tokens_in} / {res.tokens_out}")
         m5.metric("Evaluation Grade", res.answer_grade.replace("_", " ").title())
@@ -146,7 +164,7 @@ with tabs[0]:
             st.markdown(f"""
             <div class="step-box">
                 <b>Step 2: Retrieval Tool</b><br>
-                <small>Hybrid BM25 + Dense ({res.retrieval_setting})</small>
+                <small>Hybrid BM25 + Dense all-MiniLM-L6-v2 + RRF ({res.retrieval_setting})</small>
             </div>
             """, unsafe_allow_html=True)
             st.caption("✅ Chunks Retrieved")
@@ -221,7 +239,7 @@ with tabs[2]:
     st.image("docs/architecture_diagram.png", use_container_width=True)
     st.markdown("""
     - **Query Parser**: Categorizes domain intent and identifies candidate paper anchors.
-    - **Retrieval Engine**: Employs BM25 with dense re-ranking and adaptive degradation under rate-limit warnings.
+    - **Retrieval Engine**: Employs BM25 with lexical/metadata re-ranking (dense semantic retrieval planned in Phase 4) and adaptive degradation under rate-limit warnings.
     - **Synthesis Drafter**: Enforces strict grounding with `[Paper, Page, Section]` citations.
     - **Verification Guard**: Employs automated loop-back query reformulation if citations are unverified.
     - **Calibrated Stand-In**: Replicates real TTFT, queueing latency degradation, and 429 backoff throttling.
@@ -238,8 +256,8 @@ with tabs[3]:
     
     with col_l1:
         st.markdown("#### 1. Steady Load")
-        st.caption("Paced requests within free tier limits (~14 RPM).")
-        if st.button("Run Steady Test (Real Model)"):
+        st.caption("Paced requests within free tier limits (~14 RPM). Requires confirmed owner authorization & Free plan.")
+        if st.button("Run Steady Test (Groq Live - Requires Authorization)"):
             with st.spinner("Pacing 3 live requests to Groq free tier..."):
                 for i in range(3):
                     pipeline.run_request(

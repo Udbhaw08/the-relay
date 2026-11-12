@@ -6,10 +6,17 @@ from pydantic import BaseModel
 
 class ModelResponse(BaseModel):
     text: str
-    first_token_ms: float
-    total_ms: float
-    tokens_in: int
-    tokens_out: int
+    first_token_ms: Optional[float] = None
+    total_ms: float = 0.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    actual_input_tokens: Optional[int] = None
+    actual_output_tokens: Optional[int] = None
+    actual_total_tokens: Optional[int] = None
+    estimated_input_tokens: Optional[int] = None
+    estimated_output_tokens: Optional[int] = None
+    estimated_total_tokens: Optional[int] = None
+    is_simulated: bool = False
     provider: str
     model_name: str
     status: str = "ok"  # ok, rate_limited, timeout, error
