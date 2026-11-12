@@ -4,14 +4,15 @@ Implements the 4 mandatory steps, tool calling, loop-back/branching, and telemet
 """
 import time
 import re
-from typing import Optional
-from pydantic import BaseModel
+from typing import Optional, Any
+from pydantic import BaseModel, Field
 from the_relay.config import DEFAULT_SETTING, MAX_RETRIES
 from the_relay.retrieval.engine import RetrievalEngine
 from the_relay.retrieval.chunker import Chunk
 from the_relay.models.router import ModelRouter
 from the_relay.models.base import ModelResponse
 from the_relay.pipeline.resilience import compute_backoff, format_daily_exhaustion_message, is_retryable_error
+from the_relay.eval.grader import CitationVerifier, FactualGrader, is_explicit_refusal
 
 class PipelineResult(BaseModel):
     request_id: str
@@ -27,17 +28,26 @@ class PipelineResult(BaseModel):
     retrieval_setting: str
     requested_retrieval_setting: Optional[str] = None
     degradation_reason: Optional[str] = None
-    answer_grade: str  # correct, wrong, refused_correctly, refused_wrongly, error, rate_limited
+    answer_grade: str  # correct, partially_correct, wrong, refused_correctly, refused_wrongly, error, rate_limited, unscorable
     answer: str
     citations_found: list[str] = []
+    citation_details: list[dict[str, Any]] = Field(default_factory=list)
     steps_executed: list[str] = []
     loop_triggered: bool = False
     run_id: str = "default_run"
 
 class RelayPipeline:
-    def __init__(self, retrieval_engine: Optional[RetrievalEngine] = None, router: Optional[ModelRouter] = None):
+    def __init__(
+        self,
+        retrieval_engine: Optional[RetrievalEngine] = None,
+        router: Optional[ModelRouter] = None,
+        citation_verifier: Optional[CitationVerifier] = None,
+        factual_grader: Optional[FactualGrader] = None
+    ):
         self.retrieval_engine = retrieval_engine or RetrievalEngine()
         self.router = router or ModelRouter()
+        self.citation_verifier = citation_verifier or CitationVerifier()
+        self.factual_grader = factual_grader or FactualGrader(verifier=self.citation_verifier)
 
     # -------------------------------------------------------------
     # Step 1: Query Parser & Decomposer
@@ -125,19 +135,11 @@ class RelayPipeline:
         Verifies that citations in draft_text are grounded in retrieved chunks.
         Returns (is_valid, extracted_citations).
         """
-        citation_matches = re.findall(r"\[([^\]]+)\]", draft_text)
-        if "the provided papers do not" in draft_text.lower():
-            # Correct refusal does not need chunk citations
+        if is_explicit_refusal(draft_text):
             return True, []
-
-        if not citation_matches:
-            # No citations provided when claims were made
-            return False, []
-
-        # Check if citations mention one of our papers
-        valid_papers = ["Attention", "Moshi", "Dynamic Chunking", "Vaswani"]
-        grounded = any(any(vp.lower() in cit.lower() for vp in valid_papers) for cit in citation_matches)
-        return grounded, citation_matches
+        is_valid, parsed_cits, _ = self.citation_verifier.verify_citations(draft_text, chunks)
+        citations_found = [c.raw for c in parsed_cits]
+        return is_valid, citations_found
 
     # -------------------------------------------------------------
     # Pipeline Execution with Resilience & Retries
@@ -150,7 +152,9 @@ class RelayPipeline:
         source: str = "real",
         retrieval_setting: str = DEFAULT_SETTING,
         expected_negative: bool = False,
-        run_id: str = "default_run"
+        run_id: str = "default_run",
+        question_id: Optional[str] = None,
+        ground_truth_key_facts: Optional[list[str]] = None
     ) -> PipelineResult:
         """Execute full pipeline for an incoming user question."""
         start_time = time.time()
@@ -197,7 +201,16 @@ class RelayPipeline:
                         if "daily budget" in (resp.error_message or "").lower()
                         else f"Service unavailable: {resp.error_message}"
                     )
-                    grade = "refused_correctly" if expected_negative else "error"
+                    error_grade_res = self.factual_grader.grade_answer(
+                        query=query,
+                        answer=final_text,
+                        question_id=question_id,
+                        expected_negative=expected_negative,
+                        ground_truth_key_facts=ground_truth_key_facts,
+                        retrieved_chunks=chunks,
+                        status=resp.status,
+                        error_message=resp.error_message
+                    )
                     return PipelineResult(
                         request_id=request_id,
                         scenario=scenario,
@@ -212,7 +225,7 @@ class RelayPipeline:
                         retrieval_setting=effective_setting,
                         requested_retrieval_setting=retrieval_setting,
                         degradation_reason=degradation_reason,
-                        answer_grade=grade,
+                        answer_grade=error_grade_res.grade,
                         answer=final_text,
                         steps_executed=steps_executed,
                         loop_triggered=loop_triggered,
@@ -224,18 +237,39 @@ class RelayPipeline:
             is_valid, citations = self.step_4_verify_citations(draft_text, chunks)
 
             # Loop-back Branch: If citations missing or not grounded, re-retrieve once with expanded query
-            if not is_valid and not loop_triggered and not parsed["is_unanswerable"]:
+            if not is_valid and not loop_triggered and not parsed["is_unanswerable"] and not is_explicit_refusal(draft_text):
                 loop_triggered = True
                 steps_executed.append("Loop-back: Expanding retrieval query")
                 query = f"{query} technical architecture details"
                 continue
 
-            # Grading logic
-            is_refusal = "do not" in draft_text.lower() or "not state" in draft_text.lower()
-            if expected_negative:
-                grade = "refused_correctly" if is_refusal else "refused_wrongly"
-            else:
-                grade = "correct" if (not is_refusal and len(citations) > 0) else "wrong"
+            # Factual grading and evidence-based verification
+            grade_res = self.factual_grader.grade_answer(
+                query=query,
+                answer=draft_text,
+                question_id=question_id,
+                expected_negative=expected_negative,
+                ground_truth_key_facts=ground_truth_key_facts,
+                retrieved_chunks=chunks,
+                status="ok"
+            )
+
+            cit_details = [
+                {
+                    "raw": c.raw,
+                    "paper_id": c.paper_id,
+                    "paper_title": c.paper_title,
+                    "page_number": c.page_number,
+                    "section": c.section,
+                    "chunk_id": c.chunk_id,
+                    "resolves_to_corpus": c.resolves_to_corpus,
+                    "resolves_to_page_range": c.resolves_to_page_range,
+                    "grounded_in_retrieved": c.grounded_in_retrieved,
+                    "supports_evidence": c.supports_evidence,
+                    "details": c.details
+                }
+                for c in grade_res.citations_verified
+            ]
 
             return PipelineResult(
                 request_id=request_id,
@@ -251,9 +285,10 @@ class RelayPipeline:
                 retrieval_setting=effective_setting,
                 requested_retrieval_setting=retrieval_setting,
                 degradation_reason=degradation_reason,
-                answer_grade=grade,
+                answer_grade=grade_res.grade,
                 answer=draft_text,
                 citations_found=citations,
+                citation_details=cit_details,
                 steps_executed=steps_executed,
                 loop_triggered=loop_triggered,
                 run_id=run_id

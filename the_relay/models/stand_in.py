@@ -289,7 +289,8 @@ class StandInModelClient(BaseModelClient):
         elif "attention" in p_lower or "transformer" in p_lower:
             return (
                 "The Transformer architecture replaces recurrence with multi-head self-attention, "
-                "employing scaled dot-product attention softmax(QK^T / sqrt(d_k))V. "
+                "employing scaled dot-product attention softmax(QK^T / sqrt(d_k))V to counteract "
+                "large dot products pushing softmax into small gradients. "
                 "Citation: [Attention Is All You Need, Page 4, Section 3.2]."
             )
         else:

@@ -32,8 +32,10 @@ ALLOWED_ANSWER_GRADES = {
     "correct",
     "partially_correct",
     "wrong",
+    "incorrect",
     "refused_correctly",
     "refused_wrongly",
+    "refused_incorrectly",
     "error",
     "rate_limited",
     "unscorable"

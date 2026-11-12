@@ -36,7 +36,9 @@ class TrafficGenerator:
                 source=source,
                 retrieval_setting="setting_b",
                 expected_negative=bq.expected_negative,
-                run_id=effective_run_id
+                run_id=effective_run_id,
+                question_id=bq.id,
+                ground_truth_key_facts=bq.ground_truth_key_facts
             )
             self.logger.log_result(res)
             results.append(res)
@@ -71,7 +73,9 @@ class TrafficGenerator:
                 source=source,
                 retrieval_setting="setting_b",
                 expected_negative=bq.expected_negative,
-                run_id=effective_run_id
+                run_id=effective_run_id,
+                question_id=bq.id,
+                ground_truth_key_facts=bq.ground_truth_key_facts
             )
             self.logger.log_result(res)
             return res
@@ -110,7 +114,9 @@ class TrafficGenerator:
                 source=source,
                 retrieval_setting="setting_b",
                 expected_negative=bq.expected_negative,
-                run_id=effective_run_id
+                run_id=effective_run_id,
+                question_id=bq.id,
+                ground_truth_key_facts=bq.ground_truth_key_facts
             )
             self.logger.log_result(res)
             return res
@@ -147,7 +153,9 @@ class TrafficGenerator:
                 source=source,
                 retrieval_setting="setting_b",
                 expected_negative=bq.expected_negative,
-                run_id=effective_run_id
+                run_id=effective_run_id,
+                question_id=bq.id,
+                ground_truth_key_facts=bq.ground_truth_key_facts
             )
             self.logger.log_result(res)
             results.append(res)
@@ -179,7 +187,9 @@ class TrafficGenerator:
                 source=source,
                 retrieval_setting="setting_b",
                 expected_negative=bq.expected_negative,
-                run_id=effective_run_id
+                run_id=effective_run_id,
+                question_id=bq.id,
+                ground_truth_key_facts=bq.ground_truth_key_facts
             )
             self.logger.log_result(res)
             results.append(res)
@@ -218,7 +228,9 @@ class TrafficGenerator:
                 source=source,
                 retrieval_setting=setting_key,
                 expected_negative=bq.expected_negative,
-                run_id=effective_run_id
+                run_id=effective_run_id,
+                question_id=bq.id,
+                ground_truth_key_facts=bq.ground_truth_key_facts
             )
             self.logger.log_result(res)
             results.append(res)
