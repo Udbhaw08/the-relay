@@ -21,7 +21,22 @@ CSV_COLUMNS = [
     "answer_grade",
     "run_id",
     "requested_retrieval_setting",
-    "degradation_reason"
+    "degradation_reason",
+    "actual_input_tokens",
+    "actual_output_tokens",
+    "actual_total_tokens",
+    "estimated_input_tokens",
+    "estimated_output_tokens",
+    "estimated_total_tokens",
+    "is_simulated",
+    "retrieval_ms",
+    "generation_ms",
+    "verification_ms",
+    "queue_wait_ms",
+    "processing_ms",
+    "total_wall_ms",
+    "queue_depth",
+    "concurrency"
 ]
 
 LEGACY_CSV_COLUMNS = [
@@ -90,7 +105,22 @@ class ResultsLogger:
             "answer_grade": res.answer_grade,
             "run_id": effective_run_id,
             "requested_retrieval_setting": requested_setting,
-            "degradation_reason": getattr(res, "degradation_reason", "") or ""
+            "degradation_reason": getattr(res, "degradation_reason", "") or "",
+            "actual_input_tokens": "" if res.actual_input_tokens is None else res.actual_input_tokens,
+            "actual_output_tokens": "" if res.actual_output_tokens is None else res.actual_output_tokens,
+            "actual_total_tokens": "" if res.actual_total_tokens is None else res.actual_total_tokens,
+            "estimated_input_tokens": "" if res.estimated_input_tokens is None else res.estimated_input_tokens,
+            "estimated_output_tokens": "" if res.estimated_output_tokens is None else res.estimated_output_tokens,
+            "estimated_total_tokens": "" if res.estimated_total_tokens is None else res.estimated_total_tokens,
+            "is_simulated": getattr(res, "is_simulated", False),
+            "retrieval_ms": f"{res.retrieval_ms:.1f}" if res.retrieval_ms is not None else "",
+            "generation_ms": f"{res.generation_ms:.1f}" if res.generation_ms is not None else "",
+            "verification_ms": f"{res.verification_ms:.1f}" if res.verification_ms is not None else "",
+            "queue_wait_ms": f"{res.queue_wait_ms:.1f}" if res.queue_wait_ms is not None else "",
+            "processing_ms": f"{res.processing_ms:.1f}" if res.processing_ms is not None else "",
+            "total_wall_ms": f"{res.total_wall_ms:.1f}" if res.total_wall_ms is not None else "",
+            "queue_depth": res.queue_depth if res.queue_depth is not None else "",
+            "concurrency": res.concurrency if res.concurrency is not None else ""
         }
         with self._lock:
             with open(self.file_path, "a", newline="", encoding="utf-8") as f:

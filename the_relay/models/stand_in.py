@@ -45,7 +45,10 @@ class StandInModelClient(BaseModelClient):
         # State tracking
         self._lock = threading.Lock()
         self._in_flight = 0
-        self._peak_queue_length = 0
+        self._max_concurrency = 0
+        self._queue_depth = 0
+        self._peak_queue_depth = 0
+        self._peak_queue_length = 0  # legacy alias for max_concurrency
         self._request_timestamps = deque()
         self._daily_request_count = 0
         self._daily_budget_exhausted = False
@@ -56,13 +59,40 @@ class StandInModelClient(BaseModelClient):
         self._rng = random.Random(seed) if seed is not None else random.Random()
 
     def reset_quota_state(self):
-        """Reset internal rate limiters, timestamps, daily counts, and in-flight counters."""
+        """Reset internal rate limiters, timestamps, daily counts, in-flight, and queue counters."""
         with self._lock:
             self._request_timestamps.clear()
             self._daily_request_count = 0
             self._daily_budget_exhausted = False
             self._in_flight = 0
+            self._max_concurrency = 0
+            self._queue_depth = 0
+            self._peak_queue_depth = 0
             self._peak_queue_length = 0
+
+    def queue_enter(self) -> int:
+        """Record entry of a request into the waiting queue."""
+        with self._lock:
+            self._queue_depth += 1
+            if self._queue_depth > self._peak_queue_depth:
+                self._peak_queue_depth = self._queue_depth
+            return self._queue_depth
+
+    def queue_exit(self) -> int:
+        """Record departure of a request from the waiting queue into execution."""
+        with self._lock:
+            self._queue_depth = max(0, self._queue_depth - 1)
+            return self._queue_depth
+
+    def get_concurrency_stats(self) -> dict[str, int]:
+        """Return independent measurements of in-flight concurrency and queue depth."""
+        with self._lock:
+            return {
+                "in_flight": self._in_flight,
+                "max_concurrency": self._max_concurrency,
+                "queue_depth": self._queue_depth,
+                "peak_queue_depth": self._peak_queue_depth
+            }
 
     def exhaust_daily_budget(self):
         """Force stand-in into daily budget exhausted state (for Scenario 5)."""
@@ -121,16 +151,25 @@ class StandInModelClient(BaseModelClient):
         """Synchronously simulate request execution with calibrated delays."""
         t0 = time.time()
         start_perf = time.perf_counter()
-        
+        tokens_in = max(1, len(prompt.split()) * 4 // 3)
+
         # Check rate limits
         limit_error, headers = self._check_rate_limits(t0)
         if limit_error == "rate_limited":
+            total_ms = (time.perf_counter() - start_perf) * 1000.0
             return ModelResponse(
                 text="",
-                first_token_ms=10.0,
-                total_ms=10.0,
-                tokens_in=max(1, len(prompt.split())),
+                first_token_ms=None,
+                total_ms=round(total_ms, 1),
+                tokens_in=tokens_in,
                 tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=tokens_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=tokens_in,
+                is_simulated=True,
                 provider="stand_in",
                 model_name="stand-in-calibrated-v1",
                 status="rate_limited",
@@ -140,7 +179,8 @@ class StandInModelClient(BaseModelClient):
 
         with self._lock:
             self._in_flight += 1
-            if self._in_flight > self._peak_queue_length:
+            if self._in_flight > self._max_concurrency:
+                self._max_concurrency = self._in_flight
                 self._peak_queue_length = self._in_flight
 
         try:
@@ -151,10 +191,17 @@ class StandInModelClient(BaseModelClient):
                 total_ms = (time.perf_counter() - start_perf) * 1000.0
                 return ModelResponse(
                     text="",
-                    first_token_ms=total_ms,
-                    total_ms=total_ms,
-                    tokens_in=max(1, len(prompt.split())),
+                    first_token_ms=None,
+                    total_ms=round(total_ms, 1),
+                    tokens_in=tokens_in,
                     tokens_out=0,
+                    actual_input_tokens=None,
+                    actual_output_tokens=None,
+                    actual_total_tokens=None,
+                    estimated_input_tokens=tokens_in,
+                    estimated_output_tokens=0,
+                    estimated_total_tokens=tokens_in,
+                    is_simulated=True,
                     provider="stand_in",
                     model_name="stand-in-calibrated-v1",
                     status="timeout",
@@ -165,10 +212,17 @@ class StandInModelClient(BaseModelClient):
                 total_ms = (time.perf_counter() - start_perf) * 1000.0
                 return ModelResponse(
                     text="",
-                    first_token_ms=total_ms,
-                    total_ms=total_ms,
-                    tokens_in=max(1, len(prompt.split())),
+                    first_token_ms=None,
+                    total_ms=round(total_ms, 1),
+                    tokens_in=tokens_in,
                     tokens_out=0,
+                    actual_input_tokens=None,
+                    actual_output_tokens=None,
+                    actual_total_tokens=None,
+                    estimated_input_tokens=tokens_in,
+                    estimated_output_tokens=0,
+                    estimated_total_tokens=tokens_in,
+                    is_simulated=True,
                     provider="stand_in",
                     model_name="stand-in-calibrated-v1",
                     status="error",
@@ -182,7 +236,7 @@ class StandInModelClient(BaseModelClient):
             tokens_in = max(10, len(prompt.split()) * 4 // 3)
 
             ttft_ms, gen_ms = self._compute_calibrated_delay(tokens_out)
-            
+
             # Apply simulated sleeping (bypassed in fast_mode for unit tests)
             if not self.fast_mode:
                 sleep_ttft = min(ttft_ms / 1000.0, 3.0)
@@ -198,6 +252,13 @@ class StandInModelClient(BaseModelClient):
                 total_ms=round(ttft_ms + gen_ms, 1),
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=tokens_in,
+                estimated_output_tokens=tokens_out,
+                estimated_total_tokens=tokens_in + tokens_out,
+                is_simulated=True,
                 provider="stand_in",
                 model_name="stand-in-calibrated-v1",
                 status="ok",
@@ -213,15 +274,24 @@ class StandInModelClient(BaseModelClient):
         """Stream piece-by-piece emulation."""
         t0 = time.time()
         start_perf = time.perf_counter()
+        tokens_in = max(1, len(prompt.split()) * 4 // 3)
 
         limit_error, headers = self._check_rate_limits(t0)
         if limit_error == "rate_limited":
+            total_ms = (time.perf_counter() - start_perf) * 1000.0
             return ModelResponse(
                 text="",
-                first_token_ms=10.0,
-                total_ms=10.0,
-                tokens_in=max(1, len(prompt.split())),
+                first_token_ms=None,
+                total_ms=round(total_ms, 1),
+                tokens_in=tokens_in,
                 tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=tokens_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=tokens_in,
+                is_simulated=True,
                 provider="stand_in",
                 model_name="stand-in-calibrated-v1",
                 status="rate_limited",
@@ -231,6 +301,9 @@ class StandInModelClient(BaseModelClient):
 
         with self._lock:
             self._in_flight += 1
+            if self._in_flight > self._max_concurrency:
+                self._max_concurrency = self._in_flight
+                self._peak_queue_length = self._in_flight
 
         try:
             simulated_text = self._synthesize_mock_reply(prompt)
@@ -256,6 +329,13 @@ class StandInModelClient(BaseModelClient):
                 total_ms=round(ttft_ms + gen_ms, 1),
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=tokens_in,
+                estimated_output_tokens=tokens_out,
+                estimated_total_tokens=tokens_in + tokens_out,
+                is_simulated=True,
                 provider="stand_in",
                 model_name="stand-in-calibrated-v1",
                 status="ok",

@@ -25,6 +25,13 @@ class PipelineResult(BaseModel):
     retries: int
     tokens_in: int
     tokens_out: int
+    actual_input_tokens: Optional[int] = None
+    actual_output_tokens: Optional[int] = None
+    actual_total_tokens: Optional[int] = None
+    estimated_input_tokens: Optional[int] = None
+    estimated_output_tokens: Optional[int] = None
+    estimated_total_tokens: Optional[int] = None
+    is_simulated: bool = False
     retrieval_setting: str
     requested_retrieval_setting: Optional[str] = None
     degradation_reason: Optional[str] = None
@@ -35,6 +42,15 @@ class PipelineResult(BaseModel):
     steps_executed: list[str] = []
     loop_triggered: bool = False
     run_id: str = "default_run"
+    queue_wait_ms: Optional[float] = None
+    retrieval_ms: Optional[float] = None
+    generation_ms: Optional[float] = None
+    verification_ms: Optional[float] = None
+    processing_ms: Optional[float] = None
+    total_wall_ms: Optional[float] = None
+    queue_depth: Optional[int] = None
+    concurrency: Optional[int] = None
+    timestamps: dict[str, float] = Field(default_factory=dict)
 
 class RelayPipeline:
     def __init__(
@@ -100,13 +116,21 @@ class RelayPipeline:
         client = self.router.get_client(source)
         
         if not chunks:
-            # Immediate refusal branch if no relevant text exists
+            # Immediate refusal branch if no relevant text exists (null TTFT)
+            est_in = max(1, len(query.split()))
             return ModelResponse(
                 text="The provided research papers do not contain information to answer this question.",
-                first_token_ms=20.0,
-                total_ms=25.0,
-                tokens_in=len(query.split()),
+                first_token_ms=None,
+                total_ms=0.5,
+                tokens_in=est_in,
                 tokens_out=15,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=15,
+                estimated_total_tokens=est_in + 15,
+                is_simulated=(source in ("stand-in", "standin")),
                 provider=source,
                 model_name="deterministic_refusal",
                 status="ok"
@@ -154,15 +178,27 @@ class RelayPipeline:
         expected_negative: bool = False,
         run_id: str = "default_run",
         question_id: Optional[str] = None,
-        ground_truth_key_facts: Optional[list[str]] = None
+        ground_truth_key_facts: Optional[list[str]] = None,
+        queue_wait_ms: Optional[float] = None,
+        queue_depth: Optional[int] = None,
+        concurrency: Optional[int] = None
     ) -> PipelineResult:
-        """Execute full pipeline for an incoming user question."""
+        """Execute full pipeline for an incoming user question with monotonic component telemetry."""
+        t_req_start_perf = time.perf_counter()
+        t_proc_start_perf = t_req_start_perf
         start_time = time.time()
         retries_used = 0
         limit_warning = False
         steps_executed = []
         loop_triggered = False
         degradation_reason = None
+        timestamps: dict[str, float] = {
+            "request_start_perf": t_req_start_perf,
+            "processing_start_perf": t_proc_start_perf
+        }
+        retrieval_ms_accum = 0.0
+        generation_ms_accum = 0.0
+        verification_ms_accum = 0.0
 
         for attempt in range(MAX_RETRIES + 1):
             steps_executed.append("Step 1: Query Parser")
@@ -170,18 +206,29 @@ class RelayPipeline:
 
             # Step 2: Retrieval Tool Call
             steps_executed.append("Step 2: Passage Retrieval Tool")
+            t_ret_start = time.perf_counter()
             chunks, effective_setting = self.step_2_retrieve_tool(
                 query=query,
                 setting_key=retrieval_setting,
                 limit_warning=limit_warning,
                 hint=parsed["target_hint"]
             )
+            t_ret_end = time.perf_counter()
+            retrieval_ms_accum += (t_ret_end - t_ret_start) * 1000.0
+            timestamps[f"attempt_{attempt}_retrieval_start"] = t_ret_start
+            timestamps[f"attempt_{attempt}_retrieval_end"] = t_ret_end
+
             if limit_warning and effective_setting != retrieval_setting:
                 degradation_reason = "rate_limit_adaptive_throttle"
 
             # Step 3: Synthesis
             steps_executed.append("Step 3: Synthesis & Citation")
+            t_gen_start = time.perf_counter()
             resp, draft_text = self.step_3_draft_reply(query, chunks, source=source)
+            t_gen_end = time.perf_counter()
+            generation_ms_accum += (t_gen_end - t_gen_start) * 1000.0
+            timestamps[f"attempt_{attempt}_generation_start"] = t_gen_start
+            timestamps[f"attempt_{attempt}_generation_end"] = t_gen_end
 
             # Check for rate limit or errors
             if resp.status != "ok":
@@ -196,6 +243,10 @@ class RelayPipeline:
                     continue
                 else:
                     # Non-retryable or budget exhausted
+                    t_req_end = time.perf_counter()
+                    total_wall_ms = max(0.1, round((t_req_end - t_req_start_perf) * 1000.0, 1))
+                    timestamps["completion_perf"] = t_req_end
+
                     final_text = (
                         format_daily_exhaustion_message()
                         if "daily budget" in (resp.error_message or "").lower()
@@ -217,11 +268,26 @@ class RelayPipeline:
                         source=source,
                         start_time=start_time,
                         first_token_ms=None,
-                        total_ms=resp.total_ms,
+                        total_ms=total_wall_ms,
+                        total_wall_ms=total_wall_ms,
+                        retrieval_ms=round(retrieval_ms_accum, 1),
+                        generation_ms=round(generation_ms_accum, 1),
+                        verification_ms=None,
+                        processing_ms=total_wall_ms,
+                        queue_wait_ms=queue_wait_ms,
+                        queue_depth=queue_depth,
+                        concurrency=concurrency,
                         status=resp.status,
                         retries=retries_used,
                         tokens_in=resp.tokens_in,
                         tokens_out=resp.tokens_out,
+                        actual_input_tokens=resp.actual_input_tokens,
+                        actual_output_tokens=resp.actual_output_tokens,
+                        actual_total_tokens=resp.actual_total_tokens,
+                        estimated_input_tokens=resp.estimated_input_tokens,
+                        estimated_output_tokens=resp.estimated_output_tokens,
+                        estimated_total_tokens=resp.estimated_total_tokens,
+                        is_simulated=resp.is_simulated,
                         retrieval_setting=effective_setting,
                         requested_retrieval_setting=retrieval_setting,
                         degradation_reason=degradation_reason,
@@ -229,12 +295,18 @@ class RelayPipeline:
                         answer=final_text,
                         steps_executed=steps_executed,
                         loop_triggered=loop_triggered,
-                        run_id=run_id
+                        run_id=run_id,
+                        timestamps=timestamps
                     )
 
             # Step 4: Verification & Hallucination Guard
             steps_executed.append("Step 4: Verification Guard")
+            t_ver_start = time.perf_counter()
             is_valid, citations = self.step_4_verify_citations(draft_text, chunks)
+            t_ver_end = time.perf_counter()
+            verification_ms_accum += (t_ver_end - t_ver_start) * 1000.0
+            timestamps[f"attempt_{attempt}_verification_start"] = t_ver_start
+            timestamps[f"attempt_{attempt}_verification_end"] = t_ver_end
 
             # Loop-back Branch: If citations missing or not grounded, re-retrieve once with expanded query
             if not is_valid and not loop_triggered and not parsed["is_unanswerable"] and not is_explicit_refusal(draft_text):
@@ -242,6 +314,10 @@ class RelayPipeline:
                 steps_executed.append("Loop-back: Expanding retrieval query")
                 query = f"{query} technical architecture details"
                 continue
+
+            t_req_end = time.perf_counter()
+            total_wall_ms = max(0.1, round((t_req_end - t_req_start_perf) * 1000.0, 1))
+            timestamps["completion_perf"] = t_req_end
 
             # Factual grading and evidence-based verification
             grade_res = self.factual_grader.grade_answer(
@@ -271,17 +347,34 @@ class RelayPipeline:
                 for c in grade_res.citations_verified
             ]
 
+            effective_ttft = resp.first_token_ms if (resp.status == "ok" and resp.tokens_out > 0) else None
+
             return PipelineResult(
                 request_id=request_id,
                 scenario=scenario,
                 source=source,
                 start_time=start_time,
-                first_token_ms=resp.first_token_ms if resp.tokens_out > 0 else None,
-                total_ms=resp.total_ms,
+                first_token_ms=effective_ttft,
+                total_ms=total_wall_ms,
+                total_wall_ms=total_wall_ms,
+                retrieval_ms=round(retrieval_ms_accum, 1),
+                generation_ms=round(generation_ms_accum, 1),
+                verification_ms=round(verification_ms_accum, 1),
+                processing_ms=total_wall_ms,
+                queue_wait_ms=queue_wait_ms,
+                queue_depth=queue_depth,
+                concurrency=concurrency,
                 status="ok",
                 retries=retries_used,
                 tokens_in=resp.tokens_in,
                 tokens_out=resp.tokens_out,
+                actual_input_tokens=resp.actual_input_tokens,
+                actual_output_tokens=resp.actual_output_tokens,
+                actual_total_tokens=resp.actual_total_tokens,
+                estimated_input_tokens=resp.estimated_input_tokens,
+                estimated_output_tokens=resp.estimated_output_tokens,
+                estimated_total_tokens=resp.estimated_total_tokens,
+                is_simulated=resp.is_simulated,
                 retrieval_setting=effective_setting,
                 requested_retrieval_setting=retrieval_setting,
                 degradation_reason=degradation_reason,
@@ -291,27 +384,47 @@ class RelayPipeline:
                 citation_details=cit_details,
                 steps_executed=steps_executed,
                 loop_triggered=loop_triggered,
-                run_id=run_id
+                run_id=run_id,
+                timestamps=timestamps
             )
 
         # Fallback if retry loop finishes without success
+        t_req_end = time.perf_counter()
+        total_wall_ms = max(0.1, round((t_req_end - t_req_start_perf) * 1000.0, 1))
+        timestamps["completion_perf"] = t_req_end
         return PipelineResult(
             request_id=request_id,
             scenario=scenario,
             source=source,
             start_time=start_time,
             first_token_ms=None,
-            total_ms=0.0,
+            total_ms=total_wall_ms,
+            total_wall_ms=total_wall_ms,
+            retrieval_ms=round(retrieval_ms_accum, 1),
+            generation_ms=round(generation_ms_accum, 1),
+            verification_ms=round(verification_ms_accum, 1),
+            processing_ms=total_wall_ms,
+            queue_wait_ms=queue_wait_ms,
+            queue_depth=queue_depth,
+            concurrency=concurrency,
             status="error",
             retries=retries_used,
             tokens_in=0,
             tokens_out=0,
+            actual_input_tokens=None,
+            actual_output_tokens=None,
+            actual_total_tokens=None,
+            estimated_input_tokens=0,
+            estimated_output_tokens=0,
+            estimated_total_tokens=0,
+            is_simulated=(source in ("stand-in", "standin")),
             retrieval_setting=retrieval_setting,
             requested_retrieval_setting=retrieval_setting,
             degradation_reason=degradation_reason,
             answer_grade="error",
             answer="Pipeline failed after retries.",
             steps_executed=steps_executed,
-            run_id=run_id
+            run_id=run_id,
+            timestamps=timestamps
         )
 

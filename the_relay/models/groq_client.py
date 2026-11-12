@@ -135,11 +135,20 @@ class GroqClient(BaseModelClient):
                     content = getattr(choice.message, "content", "") or ""
 
             # Extract structured usage metadata if provided upstream
+            actual_in: Optional[int] = None
+            actual_out: Optional[int] = None
+            actual_tot: Optional[int] = None
             if hasattr(completion, "usage") and completion.usage:
-                tokens_in = getattr(completion.usage, "prompt_tokens", tokens_in)
-                tokens_out = getattr(completion.usage, "completion_tokens", max(1, len(content.split()) * 4 // 3))
-            else:
-                tokens_out = max(1, len(content.split()) * 4 // 3)
+                actual_in = getattr(completion.usage, "prompt_tokens", None)
+                actual_out = getattr(completion.usage, "completion_tokens", None)
+                actual_tot = getattr(completion.usage, "total_tokens", None)
+
+            est_in = max(1, len(prompt.split()) * 4 // 3)
+            est_out = max(1, len(content.split()) * 4 // 3)
+            est_tot = est_in + est_out
+
+            tokens_in = actual_in if actual_in is not None else est_in
+            tokens_out = actual_out if actual_out is not None else est_out
 
             # Extract rate limit headers from HTTP response
             rate_limit_headers = extract_rate_limit_headers(raw_response.headers)
@@ -154,6 +163,13 @@ class GroqClient(BaseModelClient):
                 total_ms=round(total_ms, 1),
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
+                actual_input_tokens=actual_in,
+                actual_output_tokens=actual_out,
+                actual_total_tokens=actual_tot,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=est_out,
+                estimated_total_tokens=est_tot,
+                is_simulated=False,
                 provider="groq",
                 model_name=self.model_name,
                 status="ok",
@@ -166,12 +182,20 @@ class GroqClient(BaseModelClient):
             resp = getattr(rle, "response", None)
             headers = extract_rate_limit_headers(getattr(resp, "headers", None)) if resp else {}
             headers["status_code"] = "429"
+            est_in = max(1, len(prompt.split()) * 4 // 3)
             return ModelResponse(
                 text="",
-                first_token_ms=round(total_ms, 1),
+                first_token_ms=None,
                 total_ms=round(total_ms, 1),
-                tokens_in=tokens_in,
+                tokens_in=est_in,
                 tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=est_in,
+                is_simulated=False,
                 provider="groq",
                 model_name=self.model_name,
                 status="rate_limited",
@@ -184,12 +208,20 @@ class GroqClient(BaseModelClient):
             resp = getattr(ae, "response", None)
             headers = extract_rate_limit_headers(getattr(resp, "headers", None)) if resp else {}
             headers["status_code"] = "401"
+            est_in = max(1, len(prompt.split()) * 4 // 3)
             return ModelResponse(
                 text="",
-                first_token_ms=round(total_ms, 1),
+                first_token_ms=None,
                 total_ms=round(total_ms, 1),
-                tokens_in=tokens_in,
+                tokens_in=est_in,
                 tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=est_in,
+                is_simulated=False,
                 provider="groq",
                 model_name=self.model_name,
                 status="error",
@@ -199,12 +231,20 @@ class GroqClient(BaseModelClient):
         except groq.APITimeoutError as te:
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
+            est_in = max(1, len(prompt.split()) * 4 // 3)
             return ModelResponse(
                 text="",
-                first_token_ms=round(total_ms, 1),
+                first_token_ms=None,
                 total_ms=round(total_ms, 1),
-                tokens_in=tokens_in,
+                tokens_in=est_in,
                 tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=est_in,
+                is_simulated=False,
                 provider="groq",
                 model_name=self.model_name,
                 status="timeout",
@@ -218,12 +258,20 @@ class GroqClient(BaseModelClient):
             status_code = getattr(ase, "status_code", 500)
             headers["status_code"] = str(status_code)
             status = "rate_limited" if status_code == 429 else "error"
+            est_in = max(1, len(prompt.split()) * 4 // 3)
             return ModelResponse(
                 text="",
-                first_token_ms=round(total_ms, 1),
+                first_token_ms=None,
                 total_ms=round(total_ms, 1),
-                tokens_in=tokens_in,
+                tokens_in=est_in,
                 tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=est_in,
+                is_simulated=False,
                 provider="groq",
                 model_name=self.model_name,
                 status=status,
@@ -233,12 +281,20 @@ class GroqClient(BaseModelClient):
         except Exception as e:
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
+            est_in = max(1, len(prompt.split()) * 4 // 3)
             return ModelResponse(
                 text="",
-                first_token_ms=round(total_ms, 1),
+                first_token_ms=None,
                 total_ms=round(total_ms, 1),
-                tokens_in=tokens_in,
+                tokens_in=est_in,
                 tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=est_in,
+                is_simulated=False,
                 provider="groq",
                 model_name=self.model_name,
                 status="error",
@@ -282,26 +338,42 @@ class GroqClient(BaseModelClient):
                 
                 # Check for usage in chunk (from stream_options)
                 if hasattr(chunk, "usage") and chunk.usage:
-                    tokens_in = getattr(chunk.usage, "prompt_tokens", tokens_in)
-                    tokens_out = getattr(chunk.usage, "completion_tokens", tokens_out)
+                    actual_tokens_in = getattr(chunk.usage, "prompt_tokens", None)
+                    actual_tokens_out = getattr(chunk.usage, "completion_tokens", None)
+                    if actual_tokens_in is not None:
+                        tokens_in = actual_tokens_in
+                    if actual_tokens_out is not None:
+                        tokens_out = actual_tokens_out
                 if hasattr(chunk, "id") and chunk.id:
                     rate_limit_headers["id"] = str(chunk.id)
 
             end_time = time.perf_counter()
             total_ms = max(0.1, (end_time - start_time) * 1000.0)
-            if first_token_ms == 0.0:
-                first_token_ms = total_ms
-            else:
+
+            final_first_token_ms: Optional[float] = None
+            if first_token_ms > 0.0 and full_text.strip():
+                final_first_token_ms = round(first_token_ms, 1)
                 total_ms = max(first_token_ms, total_ms)
-            if tokens_out == 0:
-                tokens_out = max(1, len(full_text.split()) * 4 // 3)
+
+            est_in = max(1, len(prompt.split()) * 4 // 3)
+            est_out = max(1, len(full_text.split()) * 4 // 3) if full_text.strip() else 0
+            est_tot = est_in + est_out
+
+            actual_tot = (tokens_in + tokens_out) if (tokens_in > 0 and tokens_out > 0) else None
 
             return ModelResponse(
                 text=full_text,
-                first_token_ms=round(first_token_ms, 1),
+                first_token_ms=final_first_token_ms,
                 total_ms=round(total_ms, 1),
                 tokens_in=tokens_in,
-                tokens_out=tokens_out,
+                tokens_out=tokens_out if tokens_out > 0 else est_out,
+                actual_input_tokens=tokens_in if hasattr(chunk, "usage") and chunk.usage else None,
+                actual_output_tokens=tokens_out if hasattr(chunk, "usage") and chunk.usage else None,
+                actual_total_tokens=actual_tot if hasattr(chunk, "usage") and chunk.usage else None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=est_out,
+                estimated_total_tokens=est_tot,
+                is_simulated=False,
                 provider="groq",
                 model_name=self.model_name,
                 status="ok",
@@ -313,12 +385,21 @@ class GroqClient(BaseModelClient):
             resp = getattr(rle, "response", None)
             headers = extract_rate_limit_headers(getattr(resp, "headers", None)) if resp else {}
             headers["status_code"] = "429"
+            ttft = round(first_token_ms, 1) if (first_token_ms > 0.0 and full_text.strip()) else None
+            est_in = max(1, len(prompt.split()) * 4 // 3)
             return ModelResponse(
                 text=full_text,
-                first_token_ms=round(first_token_ms or total_ms, 1),
+                first_token_ms=ttft,
                 total_ms=round(total_ms, 1),
                 tokens_in=tokens_in,
                 tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=est_in,
+                is_simulated=False,
                 provider="groq",
                 model_name=self.model_name,
                 status="rate_limited",
@@ -331,12 +412,21 @@ class GroqClient(BaseModelClient):
             resp = getattr(ae, "response", None)
             headers = extract_rate_limit_headers(getattr(resp, "headers", None)) if resp else {}
             headers["status_code"] = "401"
+            ttft = round(first_token_ms, 1) if (first_token_ms > 0.0 and full_text.strip()) else None
+            est_in = max(1, len(prompt.split()) * 4 // 3)
             return ModelResponse(
                 text=full_text,
-                first_token_ms=round(first_token_ms or total_ms, 1),
+                first_token_ms=ttft,
                 total_ms=round(total_ms, 1),
                 tokens_in=tokens_in,
                 tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=est_in,
+                is_simulated=False,
                 provider="groq",
                 model_name=self.model_name,
                 status="error",
@@ -346,12 +436,21 @@ class GroqClient(BaseModelClient):
         except groq.APITimeoutError as te:
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
+            ttft = round(first_token_ms, 1) if (first_token_ms > 0.0 and full_text.strip()) else None
+            est_in = max(1, len(prompt.split()) * 4 // 3)
             return ModelResponse(
                 text=full_text,
-                first_token_ms=round(first_token_ms or total_ms, 1),
+                first_token_ms=ttft,
                 total_ms=round(total_ms, 1),
                 tokens_in=tokens_in,
                 tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=est_in,
+                is_simulated=False,
                 provider="groq",
                 model_name=self.model_name,
                 status="timeout",
@@ -360,12 +459,21 @@ class GroqClient(BaseModelClient):
         except Exception as e:
             end_time = time.perf_counter()
             total_ms = (end_time - start_time) * 1000.0
+            ttft = round(first_token_ms, 1) if (first_token_ms > 0.0 and full_text.strip()) else None
+            est_in = max(1, len(prompt.split()) * 4 // 3)
             return ModelResponse(
                 text=full_text,
-                first_token_ms=round(first_token_ms or total_ms, 1),
+                first_token_ms=ttft,
                 total_ms=round(total_ms, 1),
                 tokens_in=tokens_in,
                 tokens_out=0,
+                actual_input_tokens=None,
+                actual_output_tokens=None,
+                actual_total_tokens=None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=0,
+                estimated_total_tokens=est_in,
+                is_simulated=False,
                 provider="groq",
                 model_name=self.model_name,
                 status="error",

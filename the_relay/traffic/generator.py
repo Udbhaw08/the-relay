@@ -4,12 +4,52 @@ steady, burst, sustained_overload, per_minute_halved, daily_budget_exhausted,
 and independent, reproducible retrieval setting benchmarks.
 """
 import time
+import threading
 import concurrent.futures
 from typing import Optional
 from the_relay.config import DEFAULT_SETTING
 from the_relay.pipeline.orchestrator import RelayPipeline, PipelineResult
 from the_relay.eval.benchmark_questions import BENCHMARK_QUESTIONS
 from the_relay.traffic.logger import ResultsLogger
+
+class ConcurrencyTracker:
+    """Thread-safe monitor tracking queue wait, queue depth, and active concurrency."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._queue_depth = 0
+        self._peak_queue_depth = 0
+        self._in_flight = 0
+        self._max_concurrency = 0
+
+    def submit_task(self) -> float:
+        """Record task submission and return monotonic submission timestamp."""
+        with self._lock:
+            self._queue_depth += 1
+            if self._queue_depth > self._peak_queue_depth:
+                self._peak_queue_depth = self._queue_depth
+            return time.perf_counter()
+
+    def start_task(self, submit_time: float) -> tuple[float, int, int]:
+        """Record task admission, return (queue_wait_ms, remaining_queue_depth, in_flight_concurrency)."""
+        with self._lock:
+            self._queue_depth = max(0, self._queue_depth - 1)
+            self._in_flight += 1
+            if self._in_flight > self._max_concurrency:
+                self._max_concurrency = self._in_flight
+            wait_ms = max(0.0, (time.perf_counter() - submit_time) * 1000.0)
+            return wait_ms, self._queue_depth, self._in_flight
+
+    def finish_task(self):
+        """Record task completion and decrement active concurrency."""
+        with self._lock:
+            self._in_flight = max(0, self._in_flight - 1)
+
+    def stats(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "peak_queue_depth": self._peak_queue_depth,
+                "max_concurrency": self._max_concurrency
+            }
 
 class TrafficGenerator:
     def __init__(self, pipeline: Optional[RelayPipeline] = None, logger: Optional[ResultsLogger] = None):
@@ -38,7 +78,10 @@ class TrafficGenerator:
                 expected_negative=bq.expected_negative,
                 run_id=effective_run_id,
                 question_id=bq.id,
-                ground_truth_key_facts=bq.ground_truth_key_facts
+                ground_truth_key_facts=bq.ground_truth_key_facts,
+                queue_wait_ms=0.0,
+                queue_depth=0,
+                concurrency=1
             )
             self.logger.log_result(res)
             results.append(res)
@@ -62,26 +105,34 @@ class TrafficGenerator:
         effective_run_id = run_id or "default_run"
         print(f"\n[TrafficGenerator] Running Scenario: BURST (Source={source}, Concurrent={num_requests}, run_id={effective_run_id})...")
         results = []
+        tracker = ConcurrencyTracker()
 
-        def _worker(idx: int):
-            bq = BENCHMARK_QUESTIONS[idx % len(BENCHMARK_QUESTIONS)]
-            req_id = f"burst_{source}_{idx+1:03d}"
-            res = self.pipeline.run_request(
-                query=bq.question,
-                request_id=req_id,
-                scenario="burst",
-                source=source,
-                retrieval_setting="setting_b",
-                expected_negative=bq.expected_negative,
-                run_id=effective_run_id,
-                question_id=bq.id,
-                ground_truth_key_facts=bq.ground_truth_key_facts
-            )
-            self.logger.log_result(res)
-            return res
+        def _worker(idx: int, t_submit: float):
+            wait_ms, q_depth, in_flight = tracker.start_task(t_submit)
+            try:
+                bq = BENCHMARK_QUESTIONS[idx % len(BENCHMARK_QUESTIONS)]
+                req_id = f"burst_{source}_{idx+1:03d}"
+                res = self.pipeline.run_request(
+                    query=bq.question,
+                    request_id=req_id,
+                    scenario="burst",
+                    source=source,
+                    retrieval_setting="setting_b",
+                    expected_negative=bq.expected_negative,
+                    run_id=effective_run_id,
+                    question_id=bq.id,
+                    ground_truth_key_facts=bq.ground_truth_key_facts,
+                    queue_wait_ms=round(wait_ms, 1),
+                    queue_depth=q_depth,
+                    concurrency=in_flight
+                )
+                self.logger.log_result(res)
+                return res
+            finally:
+                tracker.finish_task()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(num_requests, 10)) as executor:
-            futures = [executor.submit(_worker, i) for i in range(num_requests)]
+            futures = [executor.submit(_worker, i, tracker.submit_task()) for i in range(num_requests)]
             for fut in concurrent.futures.as_completed(futures):
                 try:
                     res = fut.result()
@@ -102,27 +153,38 @@ class TrafficGenerator:
         effective_run_id = run_id or "default_run"
         print(f"\n[TrafficGenerator] Running Scenario: SUSTAINED OVERLOAD (Source={source}, Requests={num_requests}, run_id={effective_run_id})...")
         results = []
+        tracker = ConcurrencyTracker()
 
-        def _worker(idx: int):
-            time.sleep(idx * 0.4)
-            bq = BENCHMARK_QUESTIONS[idx % len(BENCHMARK_QUESTIONS)]
-            req_id = f"sustained_{source}_{idx+1:03d}"
-            res = self.pipeline.run_request(
-                query=bq.question,
-                request_id=req_id,
-                scenario="sustained_overload",
-                source=source,
-                retrieval_setting="setting_b",
-                expected_negative=bq.expected_negative,
-                run_id=effective_run_id,
-                question_id=bq.id,
-                ground_truth_key_facts=bq.ground_truth_key_facts
-            )
-            self.logger.log_result(res)
-            return res
+        def _worker(idx: int, t_submit: float):
+            wait_ms, q_depth, in_flight = tracker.start_task(t_submit)
+            try:
+                bq = BENCHMARK_QUESTIONS[idx % len(BENCHMARK_QUESTIONS)]
+                req_id = f"sustained_{source}_{idx+1:03d}"
+                res = self.pipeline.run_request(
+                    query=bq.question,
+                    request_id=req_id,
+                    scenario="sustained_overload",
+                    source=source,
+                    retrieval_setting="setting_b",
+                    expected_negative=bq.expected_negative,
+                    run_id=effective_run_id,
+                    question_id=bq.id,
+                    ground_truth_key_facts=bq.ground_truth_key_facts,
+                    queue_wait_ms=round(wait_ms, 1),
+                    queue_depth=q_depth,
+                    concurrency=in_flight
+                )
+                self.logger.log_result(res)
+                return res
+            finally:
+                tracker.finish_task()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [executor.submit(_worker, i) for i in range(num_requests)]
+            futures = []
+            for i in range(num_requests):
+                t_sub = tracker.submit_task()
+                futures.append(executor.submit(_worker, i, t_sub))
+                time.sleep(0.05)  # rapid succession arrivals
             for fut in concurrent.futures.as_completed(futures):
                 res = fut.result()
                 results.append(res)
@@ -155,7 +217,10 @@ class TrafficGenerator:
                 expected_negative=bq.expected_negative,
                 run_id=effective_run_id,
                 question_id=bq.id,
-                ground_truth_key_facts=bq.ground_truth_key_facts
+                ground_truth_key_facts=bq.ground_truth_key_facts,
+                queue_wait_ms=0.0,
+                queue_depth=0,
+                concurrency=1
             )
             self.logger.log_result(res)
             results.append(res)
@@ -189,7 +254,10 @@ class TrafficGenerator:
                 expected_negative=bq.expected_negative,
                 run_id=effective_run_id,
                 question_id=bq.id,
-                ground_truth_key_facts=bq.ground_truth_key_facts
+                ground_truth_key_facts=bq.ground_truth_key_facts,
+                queue_wait_ms=0.0,
+                queue_depth=0,
+                concurrency=1
             )
             self.logger.log_result(res)
             results.append(res)
@@ -230,7 +298,10 @@ class TrafficGenerator:
                 expected_negative=bq.expected_negative,
                 run_id=effective_run_id,
                 question_id=bq.id,
-                ground_truth_key_facts=bq.ground_truth_key_facts
+                ground_truth_key_facts=bq.ground_truth_key_facts,
+                queue_wait_ms=0.0,
+                queue_depth=0,
+                concurrency=1
             )
             self.logger.log_result(res)
             results.append(res)

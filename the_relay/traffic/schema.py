@@ -22,7 +22,22 @@ REQUIRED_COLUMNS = [
 OPTIONAL_COLUMNS = [
     "run_id",
     "requested_retrieval_setting",
-    "degradation_reason"
+    "degradation_reason",
+    "actual_input_tokens",
+    "actual_output_tokens",
+    "actual_total_tokens",
+    "estimated_input_tokens",
+    "estimated_output_tokens",
+    "estimated_total_tokens",
+    "is_simulated",
+    "retrieval_ms",
+    "generation_ms",
+    "verification_ms",
+    "queue_wait_ms",
+    "processing_ms",
+    "total_wall_ms",
+    "queue_depth",
+    "concurrency"
 ]
 
 ALLOWED_STATUSES = {"ok", "rate_limited", "timeout", "error"}

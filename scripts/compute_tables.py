@@ -101,9 +101,10 @@ def generate_table_2a_and_2b(df: pd.DataFrame, run_id: Optional[str] = None) -> 
         offered_rate = round((reqs_sent / duration_s) * 60.0, 1)
 
         # TTFT: only measured on requests with successful output tokens
-        ok_subset = sub[sub["status"] == "ok"]
-        ttft_p50, ttft_p95, ttft_p99 = compute_percentiles(ok_subset["first_token_ms"])
-        tot_p50, tot_p95, tot_p99 = compute_percentiles(sub["total_ms"])
+        ok_subset = sub[(sub["status"] == "ok") & (sub["tokens_out"] > 0)]
+        valid_ttft = ok_subset[pd.to_numeric(ok_subset["first_token_ms"], errors="coerce") > 0]
+        ttft_p50, ttft_p95, ttft_p99 = compute_percentiles(valid_ttft["first_token_ms"])
+        tot_p50, tot_p95, tot_p99 = compute_percentiles(sub[sub["status"] == "ok"]["total_ms"])
 
         ttft_str = format_latencies_3(ttft_p50, ttft_p95, ttft_p99)
         tot_str = format_latencies_3(tot_p50, tot_p95, tot_p99)
@@ -119,13 +120,21 @@ def generate_table_2a_and_2b(df: pd.DataFrame, run_id: Optional[str] = None) -> 
         timed_out_pct = round((len(sub[sub["status"].isin(["timeout", "error"])]) / reqs_sent) * 100.0, 1)
         
         avg_retries = round(float(sub["retries"].mean()), 2)
-        # Peak queue heuristic based on concurrency (documented as concurrency-derived heuristic)
-        peak_queue = max(1, int(reqs_sent // 3)) if sc in ("burst", "sustained_overload") else 1
+
+        # Peak queue: accurately measured from queue telemetry when present, otherwise labelled not measured
+        if "queue_depth" in sub.columns and sub["queue_depth"].dropna().count() > 0:
+            qd = pd.to_numeric(sub["queue_depth"], errors="coerce").dropna()
+            peak_queue = str(int(qd.max())) if len(qd) > 0 else "N/A"
+        elif "peak_queue" in sub.columns and sub["peak_queue"].dropna().count() > 0:
+            qd = pd.to_numeric(sub["peak_queue"], errors="coerce").dropna()
+            peak_queue = str(int(qd.max())) if len(qd) > 0 else "N/A"
+        else:
+            peak_queue = "N/A (not measured)"
         
         avg_tokens_out = round(float(ok_subset["tokens_out"].mean()), 1) if len(ok_subset) > 0 else 0.0
         
-        # Free tier cost calculation: $0.00 for verified free tier
-        cost_per_1k = "$0.00 (Free Tier)"
+        # Cost calculation: unbilled free tier without commercial rate card
+        cost_per_1k = "N/A (Free Tier / unbilled)"
 
         t2b_lines.append(
             f"| {sc} | {succeeded_pct}% | {rate_limited_pct}% | {timed_out_pct}% | "
@@ -179,9 +188,9 @@ def generate_table_3(df: pd.DataFrame, run_id: Optional[str] = None) -> str:
             avg_tokens = "N/A"
         
         # TTFT: only measured on requests with valid output tokens
-        valid_ttft = ok_sub[pd.to_numeric(ok_sub["first_token_ms"], errors="coerce") > 0]
+        valid_ttft = ok_sub[(pd.to_numeric(ok_sub["first_token_ms"], errors="coerce") > 0) & (ok_sub["tokens_out"] > 0)]
         ttft_p50, ttft_p95, _ = compute_percentiles(valid_ttft["first_token_ms"])
-        tot_p50, tot_p95, _ = compute_percentiles(sub["total_ms"])
+        tot_p50, tot_p95, _ = compute_percentiles(ok_sub["total_ms"])
 
         ttft_str = format_latencies_2(ttft_p50, ttft_p95)
         tot_str = format_latencies_2(tot_p50, tot_p95)
