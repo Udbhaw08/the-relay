@@ -1,6 +1,7 @@
 """
 Traffic Generator simulating the 5 required load scenarios:
-steady, burst, sustained_overload, per_minute_halved, daily_budget_exhausted.
+steady, burst, sustained_overload, per_minute_halved, daily_budget_exhausted,
+and independent, reproducible retrieval setting benchmarks.
 """
 import time
 import concurrent.futures
@@ -15,12 +16,15 @@ class TrafficGenerator:
         self.pipeline = pipeline or RelayPipeline()
         self.logger = logger or ResultsLogger()
 
-    def run_scenario_steady(self, num_requests: int = 15, source: str = "real") -> list[PipelineResult]:
+    def run_scenario_steady(
+        self, num_requests: int = 15, source: str = "real", run_id: Optional[str] = None
+    ) -> list[PipelineResult]:
         """
         Scenario 1: Steady load within free tier limits.
         Dispatches requests with a smooth inter-arrival delay (~4.2s = ~14 RPM).
         """
-        print(f"\n[TrafficGenerator] Running Scenario: STEADY (Source={source}, Requests={num_requests})...")
+        effective_run_id = run_id or "default_run"
+        print(f"\n[TrafficGenerator] Running Scenario: STEADY (Source={source}, Requests={num_requests}, run_id={effective_run_id})...")
         results = []
         for i in range(num_requests):
             bq = BENCHMARK_QUESTIONS[i % len(BENCHMARK_QUESTIONS)]
@@ -31,28 +35,32 @@ class TrafficGenerator:
                 scenario="steady",
                 source=source,
                 retrieval_setting="setting_b",
-                expected_negative=bq.expected_negative
+                expected_negative=bq.expected_negative,
+                run_id=effective_run_id
             )
             self.logger.log_result(res)
             results.append(res)
             print(f"  -> [{req_id}] TTFT={res.first_token_ms}ms, Total={res.total_ms}ms, Status={res.status}")
-            
+
             # Rate pacing to avoid triggering 429 on steady state
-            if source == "real" and i < num_requests - 1:
+            if source in ("real", "groq") and i < num_requests - 1:
                 time.sleep(4.2)
             else:
                 time.sleep(0.5)
 
         return results
 
-    def run_scenario_burst(self, num_requests: int = 25, source: str = "stand-in") -> list[PipelineResult]:
+    def run_scenario_burst(
+        self, num_requests: int = 25, source: str = "stand-in", run_id: Optional[str] = None
+    ) -> list[PipelineResult]:
         """
         Scenario 2: Sudden burst.
-        Submits 25 concurrent requests simultaneously to stress queue and concurrency limiters.
+        Submits concurrent requests simultaneously to stress queue and concurrency limiters.
         """
-        print(f"\n[TrafficGenerator] Running Scenario: BURST (Source={source}, Concurrent={num_requests})...")
+        effective_run_id = run_id or "default_run"
+        print(f"\n[TrafficGenerator] Running Scenario: BURST (Source={source}, Concurrent={num_requests}, run_id={effective_run_id})...")
         results = []
-        
+
         def _worker(idx: int):
             bq = BENCHMARK_QUESTIONS[idx % len(BENCHMARK_QUESTIONS)]
             req_id = f"burst_{source}_{idx+1:03d}"
@@ -62,7 +70,8 @@ class TrafficGenerator:
                 scenario="burst",
                 source=source,
                 retrieval_setting="setting_b",
-                expected_negative=bq.expected_negative
+                expected_negative=bq.expected_negative,
+                run_id=effective_run_id
             )
             self.logger.log_result(res)
             return res
@@ -79,16 +88,19 @@ class TrafficGenerator:
 
         return results
 
-    def run_scenario_sustained_overload(self, num_requests: int = 30, source: str = "stand-in") -> list[PipelineResult]:
+    def run_scenario_sustained_overload(
+        self, num_requests: int = 30, source: str = "stand-in", run_id: Optional[str] = None
+    ) -> list[PipelineResult]:
         """
         Scenario 3: Sustained overload.
-        Continuous flood of requests arriving faster than the system can process (e.g. 50 req/min).
+        Continuous flood of requests arriving faster than the system can process.
         """
-        print(f"\n[TrafficGenerator] Running Scenario: SUSTAINED OVERLOAD (Source={source}, Requests={num_requests})...")
+        effective_run_id = run_id or "default_run"
+        print(f"\n[TrafficGenerator] Running Scenario: SUSTAINED OVERLOAD (Source={source}, Requests={num_requests}, run_id={effective_run_id})...")
         results = []
-        
+
         def _worker(idx: int):
-            time.sleep(idx * 0.4)  # High offered rate (~150 req/min offered)
+            time.sleep(idx * 0.4)
             bq = BENCHMARK_QUESTIONS[idx % len(BENCHMARK_QUESTIONS)]
             req_id = f"sustained_{source}_{idx+1:03d}"
             res = self.pipeline.run_request(
@@ -97,7 +109,8 @@ class TrafficGenerator:
                 scenario="sustained_overload",
                 source=source,
                 retrieval_setting="setting_b",
-                expected_negative=bq.expected_negative
+                expected_negative=bq.expected_negative,
+                run_id=effective_run_id
             )
             self.logger.log_result(res)
             return res
@@ -111,16 +124,19 @@ class TrafficGenerator:
 
         return results
 
-    def run_scenario_per_minute_halved(self, num_requests: int = 20, source: str = "stand-in") -> list[PipelineResult]:
+    def run_scenario_per_minute_halved(
+        self, num_requests: int = 20, source: str = "stand-in", run_id: Optional[str] = None
+    ) -> list[PipelineResult]:
         """
         Scenario 4: Per-minute limit halved.
         Tests how the system throttles and queues when the provider cuts RPM quota by 50%.
         """
-        print(f"\n[TrafficGenerator] Running Scenario: PER-MINUTE LIMIT HALVED (Source={source})...")
-        # Halve limit on stand-in
-        self.pipeline.router.stand_in_client.halve_rpm_limit()
+        effective_run_id = run_id or "default_run"
+        print(f"\n[TrafficGenerator] Running Scenario: PER-MINUTE LIMIT HALVED (Source={source}, run_id={effective_run_id})...")
+        if source in ("stand-in", "standin"):
+            self.pipeline.router.stand_in_client.halve_rpm_limit()
         results = []
-        
+
         for i in range(num_requests):
             bq = BENCHMARK_QUESTIONS[i % len(BENCHMARK_QUESTIONS)]
             req_id = f"halved_{source}_{i+1:03d}"
@@ -130,7 +146,8 @@ class TrafficGenerator:
                 scenario="per_minute_limit_halved",
                 source=source,
                 retrieval_setting="setting_b",
-                expected_negative=bq.expected_negative
+                expected_negative=bq.expected_negative,
+                run_id=effective_run_id
             )
             self.logger.log_result(res)
             results.append(res)
@@ -139,13 +156,17 @@ class TrafficGenerator:
 
         return results
 
-    def run_scenario_daily_budget_exhausted(self, num_requests: int = 15, source: str = "stand-in") -> list[PipelineResult]:
+    def run_scenario_daily_budget_exhausted(
+        self, num_requests: int = 15, source: str = "stand-in", run_id: Optional[str] = None
+    ) -> list[PipelineResult]:
         """
         Scenario 5: Daily budget exhausted (At 3 PM scenario).
         All incoming requests encounter exhausted daily quota and receive graceful notices.
         """
-        print(f"\n[TrafficGenerator] Running Scenario: DAILY BUDGET EXHAUSTED (Source={source})...")
-        self.pipeline.router.stand_in_client.exhaust_daily_budget()
+        effective_run_id = run_id or "default_run"
+        print(f"\n[TrafficGenerator] Running Scenario: DAILY BUDGET EXHAUSTED (Source={source}, run_id={effective_run_id})...")
+        if source in ("stand-in", "standin"):
+            self.pipeline.router.stand_in_client.exhaust_daily_budget()
         results = []
 
         for i in range(num_requests):
@@ -157,7 +178,8 @@ class TrafficGenerator:
                 scenario="daily_budget_exhausted",
                 source=source,
                 retrieval_setting="setting_b",
-                expected_negative=bq.expected_negative
+                expected_negative=bq.expected_negative,
+                run_id=effective_run_id
             )
             self.logger.log_result(res)
             results.append(res)
@@ -166,9 +188,26 @@ class TrafficGenerator:
 
         return results
 
-    def run_retrieval_setting_benchmark(self, setting_key: str, source: str = "stand-in") -> list[PipelineResult]:
-        """Run all 15 benchmark questions through a specific retrieval setting (for Table 3)."""
-        print(f"\n[TrafficGenerator] Evaluating Retrieval Benchmark on {setting_key} (Source={source})...")
+    def run_retrieval_setting_benchmark(
+        self,
+        setting_key: str,
+        source: str = "stand-in",
+        run_id: Optional[str] = None,
+        random_seed: Optional[int] = 42
+    ) -> list[PipelineResult]:
+        """
+        Run all 15 benchmark questions through a specific retrieval setting (for Table 3).
+        Guarantees independent experiment context, clean rate limit state, and fixed random seed.
+        """
+        effective_run_id = run_id or "default_run"
+        print(f"\n[TrafficGenerator] Evaluating Retrieval Benchmark on {setting_key} (Source={source}, run_id={effective_run_id})...")
+
+        # Isolate and reset simulator state for each setting so A does not contaminate B or C
+        if source in ("stand-in", "standin"):
+            self.pipeline.router.stand_in_client.reset_quota_state()
+            if random_seed is not None:
+                self.pipeline.router.stand_in_client.set_seed(random_seed)
+
         results = []
         for bq in BENCHMARK_QUESTIONS:
             req_id = f"eval_{setting_key}_{bq.id}"
@@ -178,9 +217,9 @@ class TrafficGenerator:
                 scenario=f"eval_{setting_key}",
                 source=source,
                 retrieval_setting=setting_key,
-                expected_negative=bq.expected_negative
+                expected_negative=bq.expected_negative,
+                run_id=effective_run_id
             )
             self.logger.log_result(res)
             results.append(res)
         return results
-

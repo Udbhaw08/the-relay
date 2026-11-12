@@ -26,6 +26,7 @@ class PipelineResult(BaseModel):
     tokens_out: int
     retrieval_setting: str
     requested_retrieval_setting: Optional[str] = None
+    degradation_reason: Optional[str] = None
     answer_grade: str  # correct, wrong, refused_correctly, refused_wrongly, error, rate_limited
     answer: str
     citations_found: list[str] = []
@@ -157,6 +158,7 @@ class RelayPipeline:
         limit_warning = False
         steps_executed = []
         loop_triggered = False
+        degradation_reason = None
 
         for attempt in range(MAX_RETRIES + 1):
             steps_executed.append("Step 1: Query Parser")
@@ -170,6 +172,8 @@ class RelayPipeline:
                 limit_warning=limit_warning,
                 hint=parsed["target_hint"]
             )
+            if limit_warning and effective_setting != retrieval_setting:
+                degradation_reason = "rate_limit_adaptive_throttle"
 
             # Step 3: Synthesis
             steps_executed.append("Step 3: Synthesis & Citation")
@@ -207,6 +211,7 @@ class RelayPipeline:
                         tokens_out=resp.tokens_out,
                         retrieval_setting=effective_setting,
                         requested_retrieval_setting=retrieval_setting,
+                        degradation_reason=degradation_reason,
                         answer_grade=grade,
                         answer=final_text,
                         steps_executed=steps_executed,
@@ -245,6 +250,7 @@ class RelayPipeline:
                 tokens_out=resp.tokens_out,
                 retrieval_setting=effective_setting,
                 requested_retrieval_setting=retrieval_setting,
+                degradation_reason=degradation_reason,
                 answer_grade=grade,
                 answer=draft_text,
                 citations_found=citations,
@@ -267,6 +273,7 @@ class RelayPipeline:
             tokens_out=0,
             retrieval_setting=retrieval_setting,
             requested_retrieval_setting=retrieval_setting,
+            degradation_reason=degradation_reason,
             answer_grade="error",
             answer="Pipeline failed after retries.",
             steps_executed=steps_executed,

@@ -20,7 +20,8 @@ CSV_COLUMNS = [
     "retrieval_setting",
     "answer_grade",
     "run_id",
-    "requested_retrieval_setting"
+    "requested_retrieval_setting",
+    "degradation_reason"
 ]
 
 LEGACY_CSV_COLUMNS = [
@@ -88,7 +89,8 @@ class ResultsLogger:
             "retrieval_setting": res.retrieval_setting,
             "answer_grade": res.answer_grade,
             "run_id": effective_run_id,
-            "requested_retrieval_setting": requested_setting
+            "requested_retrieval_setting": requested_setting,
+            "degradation_reason": getattr(res, "degradation_reason", "") or ""
         }
         with self._lock:
             with open(self.file_path, "a", newline="", encoding="utf-8") as f:

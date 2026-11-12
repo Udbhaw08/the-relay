@@ -21,7 +21,8 @@ REQUIRED_COLUMNS = [
 
 OPTIONAL_COLUMNS = [
     "run_id",
-    "requested_retrieval_setting"
+    "requested_retrieval_setting",
+    "degradation_reason"
 ]
 
 ALLOWED_STATUSES = {"ok", "rate_limited", "timeout", "error"}

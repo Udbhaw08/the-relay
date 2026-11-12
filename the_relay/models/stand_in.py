@@ -21,11 +21,14 @@ class StandInModelClient(BaseModelClient):
         ms_per_token: float = 15.0,
         failure_rate: float = 0.02,
         timeout_rate: float = 0.01,
-        concurrency_penalty_factor: float = 0.08
+        concurrency_penalty_factor: float = 0.08,
+        random_seed: Optional[int] = None,
+        fast_mode: bool = False
     ):
         self.rpm_limit = rpm_limit
         self.tpm_limit = tpm_limit
         self.rpd_limit = rpd_limit
+        self.fast_mode = fast_mode
         
         # Calibrated latency distribution parameters
         self.base_ttft_ms = base_ttft_ms
@@ -35,6 +38,10 @@ class StandInModelClient(BaseModelClient):
         self.timeout_rate = timeout_rate
         self.concurrency_penalty = concurrency_penalty_factor
         
+        # Seeded random generator for reproducible simulation
+        self.random_seed = random_seed
+        self._rng = random.Random(random_seed) if random_seed is not None else random.Random()
+
         # State tracking
         self._lock = threading.Lock()
         self._in_flight = 0
@@ -42,6 +49,20 @@ class StandInModelClient(BaseModelClient):
         self._request_timestamps = deque()
         self._daily_request_count = 0
         self._daily_budget_exhausted = False
+
+    def set_seed(self, seed: Optional[int]):
+        """Set random seed for deterministic simulation."""
+        self.random_seed = seed
+        self._rng = random.Random(seed) if seed is not None else random.Random()
+
+    def reset_quota_state(self):
+        """Reset internal rate limiters, timestamps, daily counts, and in-flight counters."""
+        with self._lock:
+            self._request_timestamps.clear()
+            self._daily_request_count = 0
+            self._daily_budget_exhausted = False
+            self._in_flight = 0
+            self._peak_queue_length = 0
 
     def exhaust_daily_budget(self):
         """Force stand-in into daily budget exhausted state (for Scenario 5)."""
@@ -87,7 +108,7 @@ class StandInModelClient(BaseModelClient):
             in_flight = self._in_flight
         
         # Log-normal jitter around base TTFT
-        raw_ttft = max(150.0, random.gauss(self.base_ttft_ms, self.ttft_std_ms))
+        raw_ttft = max(150.0, self._rng.gauss(self.base_ttft_ms, self.ttft_std_ms))
         
         # Concurrency queueing penalty: delay scales non-linearly with in-flight load
         load_multiplier = 1.0 + (self.concurrency_penalty * (in_flight ** 1.15))
@@ -124,7 +145,7 @@ class StandInModelClient(BaseModelClient):
 
         try:
             # Simulate random network fault / timeout
-            roll = random.random()
+            roll = self._rng.random()
             if roll < self.timeout_rate:
                 time.sleep(0.5)  # simulate hanging call
                 total_ms = (time.perf_counter() - start_perf) * 1000.0
@@ -162,12 +183,12 @@ class StandInModelClient(BaseModelClient):
 
             ttft_ms, gen_ms = self._compute_calibrated_delay(tokens_out)
             
-            # Apply simulated sleeping (capped to keep test runs responsive)
-            sleep_ttft = min(ttft_ms / 1000.0, 3.0)
-            time.sleep(sleep_ttft)
-            
-            sleep_gen = min(gen_ms / 1000.0, 2.0)
-            time.sleep(sleep_gen)
+            # Apply simulated sleeping (bypassed in fast_mode for unit tests)
+            if not self.fast_mode:
+                sleep_ttft = min(ttft_ms / 1000.0, 3.0)
+                time.sleep(sleep_ttft)
+                sleep_gen = min(gen_ms / 1000.0, 2.0)
+                time.sleep(sleep_gen)
 
             actual_total_ms = (time.perf_counter() - start_perf) * 1000.0
 
@@ -218,14 +239,16 @@ class StandInModelClient(BaseModelClient):
             tokens_in = max(10, len(prompt.split()) * 4 // 3)
 
             ttft_ms, gen_ms = self._compute_calibrated_delay(tokens_out)
-            time.sleep(min(ttft_ms / 1000.0, 1.5))
+            if not self.fast_mode:
+                time.sleep(min(ttft_ms / 1000.0, 1.5))
 
             # Stream words in chunks
             chunk_size = 4
             for i in range(0, len(words), chunk_size):
                 chunk = " ".join(words[i:i + chunk_size]) + " "
                 yield chunk
-                time.sleep(min((self.ms_per_token * chunk_size) / 1000.0, 0.1))
+                if not self.fast_mode:
+                    time.sleep(min((self.ms_per_token * chunk_size) / 1000.0, 0.1))
 
             return ModelResponse(
                 text=simulated_text,
