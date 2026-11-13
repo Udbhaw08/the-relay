@@ -58,17 +58,18 @@ The system targets the \textbf{GroqCloud API} (\texttt{api.groq.com}) using mode
 
 \begin{table}[h]
 \centering
-\caption{\footnotesize Table 1: Published Groq Free-plan limits (documentation \& live-verified headers)}
+\caption{\footnotesize Published Groq Free-plan limits (documentation \& live-verified headers)}
 \vspace{2pt}
-\fontsize{7.2pt}{8.5pt}\selectfont
-\begin{tabularx}{\columnwidth}{l X l c}
+\fontsize{6.8pt}{8.0pt}\selectfont
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\columnwidth}{@{} p{0.50in} p{0.78in} X c @{}}
 \toprule
-\textbf{Limit} & \textbf{Published Value} & \textbf{Source / How Found} & \textbf{Conf.} \\
+\textbf{Limit} & \shortstack[l]{\textbf{Published}\\\textbf{Value}} & \shortstack[l]{\textbf{Source /}\\\textbf{How Found}} & \textbf{Conf.} \\
 \midrule
-RPM & 30 RPM (Free plan) & Official Groq Docs & High \\
-TPM & 8,000 TPM & Groq Docs / Live Header \texttt{x-ratelimit-limit-tokens} (8000) & High \\
-RPD & 1,000 RPD & Groq Docs / Live Header \texttt{x-ratelimit-limit-requests} (1000) & High \\
-TPD & 200,000 TPD & Official Groq Docs & High \\
+RPM & 30 RPM (Free plan) & Official Groq Documentation & High \\
+TPM & 8,000 TPM & Groq Docs / Live Header (8000) & High \\
+RPD & 1,000 RPD & Groq Docs / Live Header (1000) & High \\
+TPD & 200,000 TPD & Official Groq Documentation & High \\
 In-Flight & Dynamic (1--5 conc.) & Groq Cloud Documentation & Med \\
 Hit Code & HTTP 429 & Groq API Error Specification & High \\
 Recovery & Dynamic & Headers (\texttt{retry-after}, reset) & High \\
@@ -87,9 +88,10 @@ Benchmark requests were executed under run ID \texttt{live\_groq\_verified}, log
 
 \begin{table*}[t]
 \centering
-\caption{\footnotesize Table 2a: Latency Across Load Scenarios \quad|\quad Table 2b: Resilience Outcomes (Run ID: \texttt{live\_groq\_verified})}
+\caption{\footnotesize Latency Across Load Scenarios (2a) \quad|\quad Resilience Outcomes (2b) (Run ID: \texttt{live\_groq\_verified})}
 \vspace{2pt}
-\fontsize{7.2pt}{8.5pt}\selectfont
+\fontsize{6.8pt}{8.0pt}\selectfont
+\setlength{\tabcolsep}{3.0pt}
 \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} l c c c c c c @{}}
 \toprule
 \textbf{Scenario} & \textbf{Type} & \textbf{Reqs} & \textbf{Duration (s)} & \textbf{Offered Rate} & \shortstack{\textbf{Simulated / Live TTFT}\\\textbf{p50 / p95 / p99 (ms)}} & \shortstack{\textbf{Total Latency}\\\textbf{p50 / p95 / p99 (ms)}} \\
@@ -120,16 +122,17 @@ daily\_exhausted & 0.0\% & 100.0\% & 0.0\% & 0.00 & 0 & 0.0 & N/A — no live pr
 
 \begin{table*}[t]
 \centering
-\caption{\footnotesize Table 3: Retrieval Settings Evaluation and Factual Accuracy Breakdown}
+\caption{\footnotesize Retrieval Settings Evaluation and Factual Accuracy Breakdown}
 \vspace{2pt}
-\fontsize{7.2pt}{8.5pt}\selectfont
+\fontsize{6.6pt}{7.8pt}\selectfont
+\setlength{\tabcolsep}{2.0pt}
 \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} l c c c c c c c @{}}
 \toprule
-\shortstack{\textbf{Setting}\\\textbf{(Chunk, Fetch, Rerank)}} & \textbf{Questions} & \shortstack{\textbf{Correct \&}\\\textbf{Cited \%}} & \textbf{Wrong \%} & \shortstack{\textbf{Correctly}\\\textbf{Refused \%}} & \textbf{Tokens/Ans} & \shortstack{\textbf{Simulated / Live TTFT}\\\textbf{p50/p95 (ms)}} & \shortstack{\textbf{Total Time}\\\textbf{p50/p95 (ms)}} \\
+\shortstack[l]{\textbf{Setting (Chunk, Fetch, Rerank)}} & \shortstack{\textbf{Reqs}} & \shortstack{\textbf{Correct \&}\\\textbf{Cited \%}} & \shortstack{\textbf{Wrong}\\\textbf{\%}} & \shortstack{\textbf{Refused}\\\textbf{\% (Unans)}} & \shortstack{\textbf{Tokens/}\\\textbf{Ans}} & \shortstack{\textbf{TTFT p50/p95}\\\textbf{(ms)}} & \shortstack{\textbf{Total Latency}\\\textbf{p50/p95 (ms)}} \\
 \midrule
-Setting A: 250 tok, 3 fetch, no rerank & 15 & 8.3\% (1/12) & 91.7\% (11/12) & 100.0\% (3/3) & 39.1 & 1,418.0 / 1,558.0 & 3,690.0 / 5,322.0 \\
-Setting B: 500 tok, 5 fetch, rerank: yes \textbf{(Live Groq)} & 15 & \textbf{40.0\% (4/10)} & 60.0\% (6/10) & \textbf{100.0\% (3/3)} & \textbf{538.8 (actual)} & 1,550.4 ms (live) & 54,100.2 / 54,947.8 \\
-Setting C: 1000 tok, 7 fetch, rerank: yes & 15 & 8.3\% (1/12) & 91.7\% (11/12) & 100.0\% (3/3) & 33.1 & 1,418.0 / 1,573.3 & 3,633.3 / 4,432.3 \\
+Setting A: 250 tok, top-3, BM25-only & 15 & 8.3\% (1/12) & 91.7\% (11/12) & 100.0\% (3/3) & 39.1 & 1,418.0 / 1,558.0 & 3,690.0 / 5,322.0 \\
+Setting B: 500 tok, top-5, hybrid \textbf{(Live Groq)} & 15 & \textbf{40.0\% (4/10)} & 60.0\% (6/10) & \textbf{100.0\% (3/3)} & \textbf{538.8 (act)} & 1,550.4 (live) & 54,100.2 / 54,947.8 \\
+Setting C: 1000 tok, top-7, hybrid & 15 & 8.3\% (1/12) & 91.7\% (11/12) & 100.0\% (3/3) & 33.1 & 1,418.0 / 1,573.3 & 3,633.3 / 4,432.3 \\
 \bottomrule
 \end{tabular*}
 
@@ -137,7 +140,7 @@ Setting C: 1000 tok, 7 fetch, rerank: yes & 15 & 8.3\% (1/12) & 91.7\% (11/12) &
 
 \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} l c c c c c c c c c @{}}
 \toprule
-\textbf{Setting} & \textbf{Ans Eval} & \textbf{Correct \& Cited} & \textbf{Partial} & \textbf{Wrong} & \textbf{Wrong Refused} & \textbf{Unans Eval} & \textbf{Correct Refused} & \textbf{Hallucinated} & \textbf{Infra Fails} \\
+\textbf{Setting} & \shortstack{\textbf{Ans}\\\textbf{Eval}} & \shortstack{\textbf{Correct}\\\textbf{\& Cited}} & \textbf{Partial} & \textbf{Wrong} & \shortstack{\textbf{Wrong}\\\textbf{Refused}} & \shortstack{\textbf{Unans}\\\textbf{Eval}} & \shortstack{\textbf{Correct}\\\textbf{Refused}} & \textbf{Halluc.} & \shortstack{\textbf{Infra}\\\textbf{Fails}} \\
 \midrule
 setting\_a & 12/12 & 1 & 0 & 11 & 0 & 3/3 & 3 & 0 & 0/15 \\
 setting\_b \textbf{(Live Groq)} & \textbf{10/12} & \textbf{4} & \textbf{0} & \textbf{6} & \textbf{0} & \textbf{3/3} & \textbf{3} & \textbf{0} & \textbf{2/15} \\
