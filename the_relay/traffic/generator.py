@@ -535,7 +535,8 @@ class TrafficGenerator:
         source: str = "stand-in",
         run_id: Optional[str] = None,
         random_seed: Optional[int] = 42,
-        sleeper: Optional[Any] = None
+        sleeper: Optional[Any] = None,
+        pacing_delay: Optional[float] = None
     ) -> list[PipelineResult]:
         """
         Run all 15 benchmark questions through a specific retrieval setting (for Table 3).
@@ -548,6 +549,8 @@ class TrafficGenerator:
         print(f"\n[TrafficGenerator] Evaluating Pure Retrieval-Quality Benchmark on {setting_key} (Source={source}, run_id={effective_run_id})...")
 
         eff_sleeper = sleeper
+        eff_pacing = pacing_delay if pacing_delay is not None else (15.0 if source in ("groq", "real") else 0.0)
+
         # Isolate and reset simulator state for each setting so A does not contaminate B or C
         if source in ("stand-in", "standin"):
             client = self.pipeline.router.stand_in_client
@@ -562,7 +565,9 @@ class TrafficGenerator:
 
         with ctx:
             results = []
-            for bq in BENCHMARK_QUESTIONS:
+            for i, bq in enumerate(BENCHMARK_QUESTIONS):
+                if i > 0 and eff_pacing > 0:
+                    time.sleep(eff_pacing)
                 req_id = f"eval_{setting_key}_{bq.id}"
                 res = self.pipeline.run_request(
                     query=bq.question,

@@ -182,7 +182,7 @@ class RelayPipeline:
             f"Answer:"
         )
 
-        resp = client.generate(prompt=prompt, max_tokens=350)
+        resp = client.generate(prompt=prompt, max_tokens=700)
         return resp, resp.text
 
     def step_3_stream_reply(
@@ -225,7 +225,7 @@ class RelayPipeline:
             f"Answer:"
         )
 
-        resp = yield from client.stream_generate(prompt=prompt, max_tokens=350)
+        resp = yield from client.stream_generate(prompt=prompt, max_tokens=700)
         return resp, resp.text
 
     # -------------------------------------------------------------

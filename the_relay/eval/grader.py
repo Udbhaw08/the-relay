@@ -79,12 +79,15 @@ class CitationVerifier:
 
     def extract_citations(self, text: str) -> list[str]:
         """Extract bracketed citations matching [Paper, Page X, Section Y] or [Passage N] or [chunk_id]."""
-        matches = re.findall(r"\[([^\]]+)\]", text)
+        # Normalize non-breaking and thin spaces (e.g. \u202f used between Page and number)
+        norm_text = re.sub(r"[\u202f\u00a0\u200b]", " ", text)
+        # Match bracketed strings that are NOT LaTeX display math \[ ... \]
+        matches = re.findall(r"(?<!\\)\[([^\]\n]+)\]", norm_text)
         clean_citations = []
         for m in matches:
             m_strip = m.strip()
-            # Ignore markdown image links or single footnote digits like [1] unless formatted as citation
-            if m_strip:
+            # Ignore markdown image links or LaTeX equations or single footnote digits
+            if m_strip and not m_strip.startswith("http") and not m_strip.startswith("\\"):
                 clean_citations.append(m_strip)
         return clean_citations
 
