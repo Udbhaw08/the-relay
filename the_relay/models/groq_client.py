@@ -83,6 +83,9 @@ class GroqClient(BaseModelClient):
             )
         
         target_base_url = base_url or GROQ_BASE_URL
+        if target_base_url and target_base_url.rstrip("/").endswith("/openai/v1"):
+            # Groq SDK internally appends /openai/v1, normalize base URL to prevent /openai/v1/openai/v1 404s
+            target_base_url = target_base_url.rstrip("/")[:-len("/openai/v1")]
         if target_base_url and ("x.ai" in target_base_url.lower() or "grok" in target_base_url.lower()):
             raise ValueError(
                 "Invalid provider endpoint: xAI Grok is NOT supported. GroqCloud (api.groq.com) is the required target provider."
@@ -412,14 +415,20 @@ class GroqClient(BaseModelClient):
         messages.append({"role": "user", "content": prompt})
 
         try:
-            stream = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.2,
-                stream=True,
-                stream_options={"include_usage": True}
-            )
+            stream_kwargs = {
+                "model": self.model_name,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": 0.2,
+                "stream": True
+            }
+            try:
+                stream = self.client.chat.completions.create(
+                    stream_options={"include_usage": True},
+                    **stream_kwargs
+                )
+            except (TypeError, groq.BadRequestError, Exception):
+                stream = self.client.chat.completions.create(**stream_kwargs)
             for chunk in stream:
                 if chunk.choices and len(chunk.choices) > 0:
                     delta = chunk.choices[0].delta

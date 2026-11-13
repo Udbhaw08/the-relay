@@ -20,7 +20,7 @@ LLM_PROVIDER = "groq" if raw_provider not in ("stand-in", "standin") else "stand
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 # Default verified production model for GroqCloud (llama-3.3-70b-versatile decommissioned August 16, 2026)
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
-GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com")
 RETIRED_MODELS = {"llama-3.3-70b-versatile"}
 
 # The 3 specific arXiv papers required by the assignment brief
