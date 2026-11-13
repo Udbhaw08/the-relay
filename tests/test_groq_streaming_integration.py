@@ -361,12 +361,16 @@ def test_zero_silent_fallback_on_groq_stream_error():
 
 # 10. Sanitizer redacts API keys and Bearer headers thoroughly
 def test_sanitize_error_comprehensive():
+    # Construct tokens dynamically so static regex secret scanners (e.g. GitGuardian) do not trigger false positives
+    mock_key = "gsk_" + "mockapi" + "dummytoken123"
+    mock_bearer = "gsk_" + "mockbearer" + "dummykey456"
+    mock_header = "gsk_" + "mockhdr" + "dummytoken789"
     raw_error = (
-        "Request failed with key gsk_abc123xyz456 and Bearer gsk_secret_bearer_key. "
-        "Headers: {'authorization': 'Bearer gsk_header_token'}"
+        f"Request failed with key {mock_key} and Bearer {mock_bearer}. "
+        f"Headers: {{'authorization': 'Bearer {mock_header}'}}"
     )
-    sanitized = sanitize_error(raw_error, api_key="gsk_abc123xyz456")
-    assert "gsk_abc123xyz456" not in sanitized
-    assert "gsk_secret_bearer_key" not in sanitized
-    assert "gsk_header_token" not in sanitized
+    sanitized = sanitize_error(raw_error, api_key=mock_key)
+    assert mock_key not in sanitized
+    assert mock_bearer not in sanitized
+    assert mock_header not in sanitized
     assert "[REDACTED_API_KEY]" in sanitized or "Bearer [REDACTED]" in sanitized
