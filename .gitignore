@@ -41,4 +41,5 @@ Thumbs.db
 .cache/
 data/cache/
 *.log
+scripts/bin/
 
